@@ -57,6 +57,19 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        upload: {
+          border: "hsl(var(--upload-border))",
+          bg: "hsl(var(--upload-bg))",
+          hover: "hsl(var(--upload-hover))",
+        },
+      },
+      backgroundImage: {
+        "gradient-primary": "var(--gradient-primary)",
+        "gradient-card": "var(--gradient-card)",
+      },
+      boxShadow: {
+        card: "var(--shadow-card)",
+        upload: "var(--shadow-upload)",
       },
       borderRadius: {
         lg: "var(--radius)",
