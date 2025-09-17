@@ -2,8 +2,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { FileText, Calendar, HardDrive, Hash, Image, MapPin, Camera, Palette, Zap } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import exifr from 'exifr';
-import { fileTypeFromBuffer } from 'file-type';
 
 interface FileMetadata {
   [key: string]: string | number | boolean | Date;
@@ -106,18 +104,6 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
       const buffer = await file.arrayBuffer();
       const uint8Array = new Uint8Array(buffer);
       
-      // Detecção de tipo real via magic numbers
-      try {
-        const detectedType = await fileTypeFromBuffer(uint8Array);
-        if (detectedType) {
-          allMetadata['Tipo detectado'] = detectedType.mime;
-          allMetadata['Extensão detectada'] = detectedType.ext;
-          allMetadata['Tipo corresponde'] = detectedType.mime === file.type ? 'Sim' : 'Não';
-        }
-      } catch (error) {
-        allMetadata['Erro detecção tipo'] = 'Não foi possível detectar';
-      }
-
       // Hashes criptográficos
       allMetadata['Hash SHA-256'] = await generateHash(buffer, 'SHA-256');
       allMetadata['Hash SHA-1'] = await generateHash(buffer, 'SHA-1');
@@ -133,7 +119,7 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
       allMetadata['Bytes nulos'] = uint8Array.filter(b => b === 0).length;
       allMetadata['Bytes únicos'] = new Set(uint8Array).size;
 
-      // Para imagens, extrair EXIF e dimensões
+      // Para imagens, extrair dimensões
       if (file.type.startsWith('image/')) {
         try {
           const dimensions = await analyzeImageDimensions(file);
@@ -144,43 +130,6 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
           allMetadata['Orientação'] = dimensions.width > dimensions.height ? 'Paisagem' : dimensions.height > dimensions.width ? 'Retrato' : 'Quadrada';
         } catch (error) {
           allMetadata['Erro dimensões'] = 'Não foi possível obter';
-        }
-
-        // EXIF data
-        try {
-          const exifData = await exifr.parse(file, true);
-          if (exifData) {
-            // Informações da câmera
-            if (exifData.Make) allMetadata['Fabricante câmera'] = exifData.Make;
-            if (exifData.Model) allMetadata['Modelo câmera'] = exifData.Model;
-            if (exifData.Software) allMetadata['Software'] = exifData.Software;
-            
-            // Configurações da foto
-            if (exifData.ISO) allMetadata['ISO'] = exifData.ISO;
-            if (exifData.FNumber) allMetadata['Abertura'] = `f/${exifData.FNumber}`;
-            if (exifData.ExposureTime) allMetadata['Tempo exposição'] = `${exifData.ExposureTime}s`;
-            if (exifData.FocalLength) allMetadata['Distância focal'] = `${exifData.FocalLength}mm`;
-            if (exifData.Flash) allMetadata['Flash'] = exifData.Flash > 0 ? 'Usado' : 'Não usado';
-            
-            // Data/hora
-            if (exifData.DateTimeOriginal) allMetadata['Data original foto'] = new Date(exifData.DateTimeOriginal);
-            if (exifData.CreateDate) allMetadata['Data criação'] = new Date(exifData.CreateDate);
-            
-            // GPS
-            if (exifData.latitude && exifData.longitude) {
-              allMetadata['Latitude'] = exifData.latitude.toFixed(6);
-              allMetadata['Longitude'] = exifData.longitude.toFixed(6);
-              allMetadata['Localização GPS'] = 'Disponível';
-            }
-            
-            // Outras informações técnicas
-            if (exifData.ColorSpace) allMetadata['Espaço de cor'] = exifData.ColorSpace;
-            if (exifData.WhiteBalance) allMetadata['Balanço branco'] = exifData.WhiteBalance;
-            if (exifData.ExposureMode) allMetadata['Modo exposição'] = exifData.ExposureMode;
-            if (exifData.SceneCaptureType) allMetadata['Tipo cena'] = exifData.SceneCaptureType;
-          }
-        } catch (error) {
-          allMetadata['EXIF'] = 'Não disponível ou erro';
         }
       }
 
@@ -300,6 +249,21 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
     }
     if (key.toLowerCase().includes('hash')) {
       return <Hash className="h-4 w-4" />;
+    }
+    if (key.toLowerCase().includes('pixel') || key.toLowerCase().includes('dimensão') || key.toLowerCase().includes('largura') || key.toLowerCase().includes('altura')) {
+      return <Image className="h-4 w-4" />;
+    }
+    if (key.toLowerCase().includes('gps') || key.toLowerCase().includes('latitude') || key.toLowerCase().includes('longitude')) {
+      return <MapPin className="h-4 w-4" />;
+    }
+    if (key.toLowerCase().includes('câmera') || key.toLowerCase().includes('iso') || key.toLowerCase().includes('abertura')) {
+      return <Camera className="h-4 w-4" />;
+    }
+    if (key.toLowerCase().includes('cor') || key.toLowerCase().includes('espaço')) {
+      return <Palette className="h-4 w-4" />;
+    }
+    if (key.toLowerCase().includes('entropia') || key.toLowerCase().includes('bytes')) {
+      return <Zap className="h-4 w-4" />;
     }
     return null;
   };
