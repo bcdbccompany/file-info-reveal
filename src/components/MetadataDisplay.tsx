@@ -1,10 +1,24 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { FileText, Calendar, HardDrive, Hash, Image, MapPin, Camera, Palette, Zap } from 'lucide-react';
+import { FileText, Calendar, HardDrive, Hash, Image, MapPin, Camera, Palette, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 interface FileMetadata {
   [key: string]: string | number | boolean | Date;
+}
+
+interface ScoreRule {
+  name: string;
+  description: string;
+  points: number;
+  passed: boolean;
+  reason?: string;
+}
+
+interface ScoreResult {
+  totalScore: number;
+  rules: ScoreRule[];
+  riskLevel: 'Baixo' | 'Médio' | 'Alto' | 'Muito Alto';
 }
 
 interface MetadataDisplayProps {
@@ -14,6 +28,7 @@ interface MetadataDisplayProps {
 export default function MetadataDisplay({ file }: MetadataDisplayProps) {
   const [metadata, setMetadata] = useState<FileMetadata>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
 
   useEffect(() => {
     extractAllMetadata();
@@ -157,6 +172,10 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
       allMetadata['ID único sessão'] = generateSimpleHash(file.name + file.size + file.lastModified);
 
       setMetadata(allMetadata);
+      
+      // Calcular pontuação de alteração
+      const score = calculateAlterationScore(allMetadata);
+      setScoreResult(score);
     } catch (error) {
       console.error('Erro ao extrair metadados:', error);
       setMetadata({ 'Erro': 'Falha na extração de metadados' });
@@ -235,6 +254,84 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
       hash = hash & hash; // Convert to 32bit integer
     }
     return Math.abs(hash).toString(16).substring(0, 8).toUpperCase();
+  };
+
+  const calculateAlterationScore = (metadata: FileMetadata): ScoreResult => {
+    const rules: ScoreRule[] = [];
+    let totalScore = 0;
+
+    // Regra 1: Data de alteração diferente da data de criação (+4 Pontos)
+    const lastModified = metadata['Última modificação'] as Date;
+    const created = metadata['Data de criação do objeto'] as Date;
+    
+    if (lastModified && created) {
+      const timeDiff = Math.abs(lastModified.getTime() - created.getTime());
+      const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
+      const passed = daysDiff > 1; // Se a diferença for maior que 1 dia
+      
+      rules.push({
+        name: 'Regra 1',
+        description: 'Data de alteração diferente da data de criação',
+        points: 4,
+        passed,
+        reason: passed ? `Diferença de ${daysDiff.toFixed(1)} dias detectada` : 'Datas são similares'
+      });
+      
+      if (passed) totalScore += 4;
+    }
+
+    // Regra 2: tem o valor "YCbCr 4:4:4" em algum metadado (+2 Pontos)
+    const hasYCbCr = Object.values(metadata).some(value => 
+      String(value).toLowerCase().includes('ycbcr 4:4:4')
+    );
+    
+    rules.push({
+      name: 'Regra 2',
+      description: 'Contém "YCbCr 4:4:4" nos metadados',
+      points: 2,
+      passed: hasYCbCr,
+      reason: hasYCbCr ? 'Valor "YCbCr 4:4:4" encontrado' : 'Valor não encontrado'
+    });
+    
+    if (hasYCbCr) totalScore += 2;
+
+    // Regra 3: tem o valor "Photoshop" em algum metadado (+4 Pontos)
+    const hasPhotoshop = Object.values(metadata).some(value => 
+      String(value).toLowerCase().includes('photoshop')
+    );
+    
+    rules.push({
+      name: 'Regra 3',
+      description: 'Contém "Photoshop" nos metadados',
+      points: 4,
+      passed: hasPhotoshop,
+      reason: hasPhotoshop ? 'Referência ao Photoshop encontrada' : 'Nenhuma referência ao Photoshop'
+    });
+    
+    if (hasPhotoshop) totalScore += 4;
+
+    // Regra 4: tem o valor "RGB" em algum metadado (+10 Pontos)
+    const hasRGB = Object.values(metadata).some(value => 
+      String(value).toLowerCase().includes('rgb')
+    );
+    
+    rules.push({
+      name: 'Regra 4',
+      description: 'Contém "RGB" nos metadados',
+      points: 10,
+      passed: hasRGB,
+      reason: hasRGB ? 'Referência ao RGB encontrada' : 'Nenhuma referência ao RGB'
+    });
+    
+    if (hasRGB) totalScore += 10;
+
+    // Determinar nível de risco
+    let riskLevel: 'Baixo' | 'Médio' | 'Alto' | 'Muito Alto' = 'Baixo';
+    if (totalScore >= 15) riskLevel = 'Muito Alto';
+    else if (totalScore >= 10) riskLevel = 'Alto';
+    else if (totalScore >= 5) riskLevel = 'Médio';
+
+    return { totalScore, rules, riskLevel };
   };
 
   const getIconForKey = (key: string) => {
@@ -337,6 +434,80 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
             Total de metadados encontrados: <span className="font-semibold text-foreground">{metadataEntries.length}</span>
           </p>
         </div>
+
+        {/* Seção de Pontuação de Alteração */}
+        {scoreResult && (
+          <div className="mt-6 p-6 bg-gradient-to-br from-primary/5 to-secondary/5 rounded-lg border border-border">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-foreground flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-primary" />
+                Análise de Alteração
+              </h3>
+              <div className="flex items-center gap-2">
+                <Badge 
+                  variant={
+                    scoreResult.riskLevel === 'Muito Alto' ? 'destructive' : 
+                    scoreResult.riskLevel === 'Alto' ? 'destructive' :
+                    scoreResult.riskLevel === 'Médio' ? 'secondary' : 'outline'
+                  }
+                  className="text-sm font-semibold"
+                >
+                  {scoreResult.riskLevel}
+                </Badge>
+                <span className="text-2xl font-bold text-primary">
+                  {scoreResult.totalScore} pts
+                </span>
+              </div>
+            </div>
+            
+            <div className="grid gap-3">
+              {scoreResult.rules.map((rule, index) => (
+                <div
+                  key={index}
+                  className={`flex items-center justify-between p-4 rounded-lg border transition-colors ${
+                    rule.passed 
+                      ? 'bg-destructive/10 border-destructive/20' 
+                      : 'bg-muted/30 border-border'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    {rule.passed ? (
+                      <AlertTriangle className="h-4 w-4 text-destructive flex-shrink-0" />
+                    ) : (
+                      <CheckCircle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                    )}
+                    <div>
+                      <span className="font-medium text-foreground">{rule.name}</span>
+                      <p className="text-sm text-muted-foreground">{rule.description}</p>
+                      {rule.reason && (
+                        <p className="text-xs text-muted-foreground mt-1 italic">
+                          {rule.reason}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge 
+                      variant={rule.passed ? 'destructive' : 'outline'}
+                      className="text-xs"
+                    >
+                      {rule.passed ? `+${rule.points}` : '0'} pts
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="mt-4 p-4 bg-muted/20 rounded-lg">
+              <p className="text-sm text-muted-foreground text-center">
+                <span className="font-semibold text-foreground">Pontuação total: {scoreResult.totalScore} pontos</span>
+                <span className="block mt-1">
+                  Quanto maior a pontuação, maior a probabilidade de alteração do arquivo
+                </span>
+              </p>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
