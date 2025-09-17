@@ -95,6 +95,236 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
     });
   };
 
+  const extractExifData = async (buffer: ArrayBuffer): Promise<{ [key: string]: any }> => {
+    const exifData: { [key: string]: any } = {};
+    const dataView = new DataView(buffer);
+    
+    try {
+      // Verificar se é JPEG
+      if (dataView.getUint16(0) !== 0xFFD8) {
+        return exifData;
+      }
+
+      let offset = 2;
+      while (offset < dataView.byteLength) {
+        const marker = dataView.getUint16(offset);
+        
+        if (marker === 0xFFE1) { // APP1 segment (EXIF)
+          const segmentLength = dataView.getUint16(offset + 2);
+          const segmentStart = offset + 4;
+          
+          // Verificar cabeçalho EXIF
+          if (dataView.getUint32(segmentStart) === 0x45786966 && 
+              dataView.getUint16(segmentStart + 4) === 0x0000) {
+            
+            const tiffStart = segmentStart + 6;
+            const byteOrder = dataView.getUint16(tiffStart);
+            const littleEndian = byteOrder === 0x4949;
+            
+            exifData['Byte Order'] = littleEndian ? 'Little-endian (Intel)' : 'Big-endian (Motorola)';
+            
+            const ifdOffset = littleEndian ? 
+              dataView.getUint32(tiffStart + 4, true) : 
+              dataView.getUint32(tiffStart + 4, false);
+            
+            // Ler IFD0
+            parseIFD(dataView, tiffStart + ifdOffset, tiffStart, littleEndian, exifData, 'IFD0');
+          }
+          
+          break;
+        }
+        
+        // Pular para próximo segment
+        if (marker >= 0xFFC0 && marker <= 0xFFCF && marker !== 0xFFC4 && marker !== 0xFFC8) {
+          break;
+        }
+        
+        const segmentLength = dataView.getUint16(offset + 2);
+        offset += 2 + segmentLength;
+      }
+      
+    } catch (error) {
+      console.warn('Erro ao extrair EXIF:', error);
+    }
+    
+    return exifData;
+  };
+
+  const parseIFD = (dataView: DataView, ifdOffset: number, tiffStart: number, littleEndian: boolean, exifData: any, ifdName: string) => {
+    try {
+      const numEntries = littleEndian ? 
+        dataView.getUint16(ifdOffset, true) : 
+        dataView.getUint16(ifdOffset, false);
+
+      for (let i = 0; i < numEntries; i++) {
+        const entryOffset = ifdOffset + 2 + (i * 12);
+        
+        const tag = littleEndian ? 
+          dataView.getUint16(entryOffset, true) : 
+          dataView.getUint16(entryOffset, false);
+        
+        const type = littleEndian ? 
+          dataView.getUint16(entryOffset + 2, true) : 
+          dataView.getUint16(entryOffset + 2, false);
+        
+        const count = littleEndian ? 
+          dataView.getUint32(entryOffset + 4, true) : 
+          dataView.getUint32(entryOffset + 4, false);
+
+        // Mapear tags EXIF mais comuns
+        const tagNames: { [key: number]: string } = {
+          0x010F: 'Fabricante da Câmera',
+          0x0110: 'Modelo da Câmera',
+          0x0112: 'Orientação',
+          0x011A: 'Resolução X',
+          0x011B: 'Resolução Y',
+          0x0128: 'Unidade de Resolução',
+          0x0131: 'Software',
+          0x0132: 'Data de Modificação',
+          0x829A: 'Tempo de Exposição',
+          0x829D: 'Número F',
+          0x8822: 'Programa de Exposição',
+          0x8827: 'ISO',
+          0x9000: 'Versão EXIF',
+          0x9003: 'Data Original',
+          0x9004: 'Data de Criação Digital',
+          0x920A: 'Distância Focal',
+          0x9207: 'Modo de Medição',
+          0x9209: 'Flash',
+          0xA002: 'Largura da Imagem',
+          0xA003: 'Altura da Imagem',
+          0xA402: 'Modo de Exposição',
+          0xA403: 'Balanço de Branco',
+          0x0213: 'Posicionamento YCbCr'
+        };
+
+        const tagName = tagNames[tag] || `Tag 0x${tag.toString(16).toUpperCase()}`;
+        
+        try {
+          let value = readTagValue(dataView, entryOffset + 8, type, count, tiffStart, littleEndian);
+          
+          // Formatação especial para alguns campos
+          if (tag === 0x0112) { // Orientação
+            const orientations = ['', 'Normal', 'Espelhado H', 'Rotação 180°', 'Espelhado V', 'Espelhado H + Rot 90° CCW', 'Rotação 90° CW', 'Espelhado H + Rot 90° CW', 'Rotação 90° CCW'];
+            value = orientations[value as number] || `Valor ${value}`;
+          } else if (tag === 0x8822) { // Programa de Exposição
+            const programs = ['', 'Manual', 'Prioridade Normal', 'Prioridade Abertura', 'Prioridade Obturador', 'Criativo', 'Ação', 'Retrato', 'Paisagem'];
+            value = programs[value as number] || `Programa ${value}`;
+          } else if (tag === 0x9207) { // Modo de Medição
+            const meteringModes = ['', 'Média', 'Média ponderada central', 'Pontual', 'Multi-pontual', 'Padrão', 'Parcial'];
+            value = meteringModes[value as number] || `Modo ${value}`;
+          } else if (tag === 0x9209) { // Flash
+            value = (value as number) & 1 ? 'Flash disparado' : 'Flash não disparado';
+          } else if (tag === 0xA402) { // Modo de Exposição
+            const exposureModes = ['Auto', 'Manual', 'Prioridade Abertura'];
+            value = exposureModes[value as number] || `Modo ${value}`;
+          } else if (tag === 0xA403) { // Balanço de Branco
+            const wbModes = ['Auto', 'Manual'];
+            value = wbModes[value as number] || `WB ${value}`;
+          }
+          
+          exifData[tagName] = value;
+          
+        } catch (e) {
+          // Ignorar erros de tags individuais
+        }
+      }
+      
+      // Verificar se existe EXIF SubIFD
+      if (exifData['Tag 0x8769']) {
+        parseIFD(dataView, tiffStart + (exifData['Tag 0x8769'] as number), tiffStart, littleEndian, exifData, 'EXIF');
+      }
+      
+    } catch (error) {
+      console.warn(`Erro ao parsear ${ifdName}:`, error);
+    }
+  };
+
+  const readTagValue = (dataView: DataView, offset: number, type: number, count: number, tiffStart: number, littleEndian: boolean): any => {
+    let valueOffset = offset;
+    
+    // Se o valor for maior que 4 bytes, está armazenado em outro local
+    if (getTypeSize(type) * count > 4) {
+      valueOffset = tiffStart + (littleEndian ? dataView.getUint32(offset, true) : dataView.getUint32(offset, false));
+    }
+    
+    switch (type) {
+      case 1: // BYTE
+        return dataView.getUint8(valueOffset);
+      case 2: // ASCII
+        let str = '';
+        for (let i = 0; i < count - 1; i++) {
+          const char = dataView.getUint8(valueOffset + i);
+          if (char === 0) break;
+          str += String.fromCharCode(char);
+        }
+        return str;
+      case 3: // SHORT
+        return littleEndian ? dataView.getUint16(valueOffset, true) : dataView.getUint16(valueOffset, false);
+      case 4: // LONG
+        return littleEndian ? dataView.getUint32(valueOffset, true) : dataView.getUint32(valueOffset, false);
+      case 5: // RATIONAL
+        const numerator = littleEndian ? dataView.getUint32(valueOffset, true) : dataView.getUint32(valueOffset, false);
+        const denominator = littleEndian ? dataView.getUint32(valueOffset + 4, true) : dataView.getUint32(valueOffset + 4, false);
+        return denominator === 0 ? 0 : numerator / denominator;
+      case 7: // UNDEFINED
+        return `(Binary data ${count} bytes)`;
+      case 9: // SLONG
+        return littleEndian ? dataView.getInt32(valueOffset, true) : dataView.getInt32(valueOffset, false);
+      case 10: // SRATIONAL
+        const sNumerator = littleEndian ? dataView.getInt32(valueOffset, true) : dataView.getInt32(valueOffset, false);
+        const sDenominator = littleEndian ? dataView.getInt32(valueOffset + 4, true) : dataView.getInt32(valueOffset + 4, false);
+        return sDenominator === 0 ? 0 : sNumerator / sDenominator;
+      default:
+        return `(Tipo desconhecido ${type})`;
+    }
+  };
+
+  const getTypeSize = (type: number): number => {
+    const sizes = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8];
+    return sizes[type] || 1;
+  };
+
+  const analyzeColorProfile = (buffer: ArrayBuffer): { [key: string]: any } => {
+    const profileData: { [key: string]: any } = {};
+    const dataView = new DataView(buffer);
+    
+    try {
+      // Procurar por perfil ICC embedded
+      let offset = 0;
+      while (offset < dataView.byteLength - 4) {
+        // Procurar assinatura 'acsp' (perfil ICC)
+        if (dataView.getUint32(offset) === 0x61637370) {
+          profileData['Perfil ICC'] = 'Encontrado';
+          
+          // Ler cabeçalho do perfil
+          if (offset >= 36) {
+            const profileSize = dataView.getUint32(offset - 36);
+            profileData['Tamanho do Perfil ICC'] = `${profileSize} bytes`;
+            
+            // Ler classe do dispositivo
+            if (offset >= 12) {
+              const deviceClass = String.fromCharCode(
+                dataView.getUint8(offset - 24),
+                dataView.getUint8(offset - 23),
+                dataView.getUint8(offset - 22),
+                dataView.getUint8(offset - 21)
+              );
+              profileData['Classe do Dispositivo'] = deviceClass;
+            }
+          }
+          
+          break;
+        }
+        offset++;
+      }
+    } catch (error) {
+      console.warn('Erro ao analisar perfil de cor:', error);
+    }
+    
+    return profileData;
+  };
+
   const extractAllMetadata = async () => {
     setIsLoading(true);
     const allMetadata: FileMetadata = {};
@@ -122,6 +352,16 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
       // Hashes criptográficos
       allMetadata['Hash SHA-256'] = await generateHash(buffer, 'SHA-256');
       allMetadata['Hash SHA-1'] = await generateHash(buffer, 'SHA-1');
+
+      // Extrair dados EXIF para imagens
+      if (file.type.startsWith('image/')) {
+        const exifData = await extractExifData(buffer);
+        Object.assign(allMetadata, exifData);
+        
+        // Analisar perfil de cor
+        const colorProfile = analyzeColorProfile(buffer);
+        Object.assign(allMetadata, colorProfile);
+      }
       
       // Análise de entropy/randomness
       const entropy = calculateEntropy(uint8Array);
