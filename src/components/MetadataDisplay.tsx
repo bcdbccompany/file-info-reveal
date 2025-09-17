@@ -106,7 +106,7 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
       }
 
       let offset = 2;
-      while (offset < dataView.byteLength) {
+      while (offset < dataView.byteLength - 10) {
         const marker = dataView.getUint16(offset);
         
         if (marker === 0xFFE1) { // APP1 segment (EXIF)
@@ -114,21 +114,26 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
           const segmentStart = offset + 4;
           
           // Verificar cabeçalho EXIF
-          if (dataView.getUint32(segmentStart) === 0x45786966 && 
+          if (segmentStart + 10 < dataView.byteLength &&
+              dataView.getUint32(segmentStart) === 0x45786966 && 
               dataView.getUint16(segmentStart + 4) === 0x0000) {
             
             const tiffStart = segmentStart + 6;
-            const byteOrder = dataView.getUint16(tiffStart);
-            const littleEndian = byteOrder === 0x4949;
-            
-            exifData['Byte Order'] = littleEndian ? 'Little-endian (Intel)' : 'Big-endian (Motorola)';
-            
-            const ifdOffset = littleEndian ? 
-              dataView.getUint32(tiffStart + 4, true) : 
-              dataView.getUint32(tiffStart + 4, false);
-            
-            // Ler IFD0
-            parseIFD(dataView, tiffStart + ifdOffset, tiffStart, littleEndian, exifData, 'IFD0');
+            if (tiffStart + 8 < dataView.byteLength) {
+              const byteOrder = dataView.getUint16(tiffStart);
+              const littleEndian = byteOrder === 0x4949;
+              
+              exifData['Byte Order'] = littleEndian ? 'Little-endian (Intel)' : 'Big-endian (Motorola)';
+              
+              const ifdOffset = littleEndian ? 
+                dataView.getUint32(tiffStart + 4, true) : 
+                dataView.getUint32(tiffStart + 4, false);
+              
+              // Ler IFD0 com validação
+              if (tiffStart + ifdOffset + 2 < dataView.byteLength) {
+                parseIFD(dataView, tiffStart + ifdOffset, tiffStart, littleEndian, exifData, new Set());
+              }
+            }
           }
           
           break;
@@ -140,6 +145,7 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
         }
         
         const segmentLength = dataView.getUint16(offset + 2);
+        if (segmentLength < 2 || offset + segmentLength >= dataView.byteLength) break;
         offset += 2 + segmentLength;
       }
       
@@ -150,14 +156,27 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
     return exifData;
   };
 
-  const parseIFD = (dataView: DataView, ifdOffset: number, tiffStart: number, littleEndian: boolean, exifData: any, ifdName: string) => {
+  const parseIFD = (dataView: DataView, ifdOffset: number, tiffStart: number, littleEndian: boolean, exifData: any, visitedOffsets: Set<number>) => {
     try {
+      // Prevenir recursão infinita
+      if (visitedOffsets.has(ifdOffset) || ifdOffset < 0 || ifdOffset + 2 > dataView.byteLength) {
+        return;
+      }
+      visitedOffsets.add(ifdOffset);
+
       const numEntries = littleEndian ? 
         dataView.getUint16(ifdOffset, true) : 
         dataView.getUint16(ifdOffset, false);
 
+      // Validar número de entradas
+      if (numEntries > 200 || ifdOffset + 2 + (numEntries * 12) > dataView.byteLength) {
+        return;
+      }
+
       for (let i = 0; i < numEntries; i++) {
         const entryOffset = ifdOffset + 2 + (i * 12);
+        
+        if (entryOffset + 12 > dataView.byteLength) break;
         
         const tag = littleEndian ? 
           dataView.getUint16(entryOffset, true) : 
@@ -171,72 +190,83 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
           dataView.getUint32(entryOffset + 4, true) : 
           dataView.getUint32(entryOffset + 4, false);
 
-        // Mapear tags EXIF mais comuns
+        // Tags EXIF expandidos
         const tagNames: { [key: number]: string } = {
-          0x010F: 'Fabricante da Câmera',
-          0x0110: 'Modelo da Câmera',
-          0x0112: 'Orientação',
-          0x011A: 'Resolução X',
-          0x011B: 'Resolução Y',
-          0x0128: 'Unidade de Resolução',
+          0x010F: 'Make',
+          0x0110: 'Model', 
+          0x0112: 'Orientation',
+          0x011A: 'XResolution',
+          0x011B: 'YResolution',
+          0x0128: 'ResolutionUnit',
           0x0131: 'Software',
-          0x0132: 'Data de Modificação',
-          0x829A: 'Tempo de Exposição',
-          0x829D: 'Número F',
-          0x8822: 'Programa de Exposição',
+          0x0132: 'ModifyDate',
+          0x0213: 'YCbCrPositioning',
+          0x829A: 'ExposureTime',
+          0x829D: 'FNumber',
+          0x8822: 'ExposureProgram',
           0x8827: 'ISO',
-          0x9000: 'Versão EXIF',
-          0x9003: 'Data Original',
-          0x9004: 'Data de Criação Digital',
-          0x920A: 'Distância Focal',
-          0x9207: 'Modo de Medição',
+          0x9000: 'ExifVersion',
+          0x9003: 'DateTimeOriginal',
+          0x9004: 'CreateDate',
+          0x9101: 'ComponentsConfiguration',
+          0x9207: 'MeteringMode',
           0x9209: 'Flash',
-          0xA002: 'Largura da Imagem',
-          0xA003: 'Altura da Imagem',
-          0xA402: 'Modo de Exposição',
-          0xA403: 'Balanço de Branco',
-          0x0213: 'Posicionamento YCbCr'
+          0x920A: 'FocalLength',
+          0x9286: 'UserComment',
+          0xA000: 'FlashPixVersion',
+          0xA001: 'ColorSpace',
+          0xA002: 'ExifImageWidth',
+          0xA003: 'ExifImageHeight',
+          0xA402: 'ExposureMode',
+          0xA403: 'WhiteBalance',
+          0xA406: 'SceneCaptureType',
+          0x8769: 'ExifIFDOffset',
+          0x8825: 'GPSInfoOffset'
         };
 
-        const tagName = tagNames[tag] || `Tag 0x${tag.toString(16).toUpperCase()}`;
+        const tagName = tagNames[tag] || `Tag_0x${tag.toString(16).toUpperCase()}`;
         
         try {
           let value = readTagValue(dataView, entryOffset + 8, type, count, tiffStart, littleEndian);
           
-          // Formatação especial para alguns campos
-          if (tag === 0x0112) { // Orientação
-            const orientations = ['', 'Normal', 'Espelhado H', 'Rotação 180°', 'Espelhado V', 'Espelhado H + Rot 90° CCW', 'Rotação 90° CW', 'Espelhado H + Rot 90° CW', 'Rotação 90° CCW'];
-            value = orientations[value as number] || `Valor ${value}`;
-          } else if (tag === 0x8822) { // Programa de Exposição
-            const programs = ['', 'Manual', 'Prioridade Normal', 'Prioridade Abertura', 'Prioridade Obturador', 'Criativo', 'Ação', 'Retrato', 'Paisagem'];
-            value = programs[value as number] || `Programa ${value}`;
-          } else if (tag === 0x9207) { // Modo de Medição
-            const meteringModes = ['', 'Média', 'Média ponderada central', 'Pontual', 'Multi-pontual', 'Padrão', 'Parcial'];
-            value = meteringModes[value as number] || `Modo ${value}`;
-          } else if (tag === 0x9209) { // Flash
-            value = (value as number) & 1 ? 'Flash disparado' : 'Flash não disparado';
-          } else if (tag === 0xA402) { // Modo de Exposição
-            const exposureModes = ['Auto', 'Manual', 'Prioridade Abertura'];
-            value = exposureModes[value as number] || `Modo ${value}`;
-          } else if (tag === 0xA403) { // Balanço de Branco
-            const wbModes = ['Auto', 'Manual'];
-            value = wbModes[value as number] || `WB ${value}`;
+          // Formatações especiais
+          if (tag === 0x0112 && typeof value === 'number') {
+            const orientations = ['', 'Rotate 0°', 'Rotate 180°', 'Rotate 180°', 'Rotate 180°', 'Rotate 270° CW', 'Rotate 90° CW', 'Rotate 270° CCW', 'Rotate 90° CCW'];
+            value = orientations[value] || `Orientation ${value}`;
+          } else if (tag === 0x8822 && typeof value === 'number') {
+            const programs = ['Not Defined', 'Manual', 'Program AE', 'Aperture Priority', 'Shutter Priority', 'Creative', 'Action', 'Portrait', 'Landscape'];
+            value = programs[value] || `Program ${value}`;
+          } else if (tag === 0x9207 && typeof value === 'number') {
+            const meteringModes = ['Unknown', 'Average', 'Center-weighted average', 'Spot', 'Multi-spot', 'Multi-segment', 'Partial'];
+            value = meteringModes[value] || `Metering ${value}`;
+          } else if (tag === 0x9209 && typeof value === 'number') {
+            value = (value & 1) ? 'Flash' : 'No Flash';
+          } else if (tag === 0xA001 && typeof value === 'number') {
+            value = value === 1 ? 'sRGB' : value === 65535 ? 'Uncalibrated' : `ColorSpace ${value}`;
+          } else if (tag === 0x9101 && typeof value === 'string') {
+            // ComponentsConfiguration para detectar YCbCr
+            if (value.includes('1') && value.includes('2') && value.includes('3')) {
+              exifData['YCbCrSubSampling'] = 'YCbCr4:2:0';
+            }
           }
           
           exifData[tagName] = value;
           
+          // Processar sub-IFDs
+          if (tag === 0x8769 && typeof value === 'number') { // EXIF SubIFD
+            const exifIfdOffset = tiffStart + value;
+            if (exifIfdOffset + 2 <= dataView.byteLength && !visitedOffsets.has(exifIfdOffset)) {
+              parseIFD(dataView, exifIfdOffset, tiffStart, littleEndian, exifData, new Set(visitedOffsets));
+            }
+          }
+          
         } catch (e) {
-          // Ignorar erros de tags individuais
+          // Ignorar tags problemáticas
         }
       }
       
-      // Verificar se existe EXIF SubIFD
-      if (exifData['Tag 0x8769']) {
-        parseIFD(dataView, tiffStart + (exifData['Tag 0x8769'] as number), tiffStart, littleEndian, exifData, 'EXIF');
-      }
-      
     } catch (error) {
-      console.warn(`Erro ao parsear ${ifdName}:`, error);
+      console.warn('Erro ao parsear IFD:', error);
     }
   };
 
@@ -290,34 +320,153 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
     const dataView = new DataView(buffer);
     
     try {
-      // Procurar por perfil ICC embedded
+      // Procurar por perfil ICC embedded e dados de cor em JPEG
       let offset = 0;
-      while (offset < dataView.byteLength - 4) {
-        // Procurar assinatura 'acsp' (perfil ICC)
-        if (dataView.getUint32(offset) === 0x61637370) {
-          profileData['Perfil ICC'] = 'Encontrado';
+      
+      // Primeiro, procurar por segmentos JPEG APP2 (perfil ICC)
+      if (dataView.getUint16(0) === 0xFFD8) { // JPEG
+        offset = 2;
+        while (offset < dataView.byteLength - 10) {
+          const marker = dataView.getUint16(offset);
           
-          // Ler cabeçalho do perfil
+          if (marker === 0xFFE2) { // APP2 - geralmente contém perfil ICC
+            const segmentLength = dataView.getUint16(offset + 2);
+            const segmentStart = offset + 4;
+            
+            // Verificar assinatura ICC
+            if (segmentStart + 12 < dataView.byteLength) {
+              const iccHeader = new Uint8Array(buffer, segmentStart, 12);
+              const iccString = String.fromCharCode(...iccHeader);
+              
+              if (iccString.includes('ICC_PROFILE')) {
+                profileData['ICC Profile'] = 'Embedded';
+                
+                // Tentar extrair informações do perfil
+                const profileStart = segmentStart + 14;
+                if (profileStart + 128 < dataView.byteLength) {
+                  // Ler cabeçalho do perfil ICC
+                  const profileSize = dataView.getUint32(profileStart);
+                  profileData['Profile Size'] = `${profileSize} bytes`;
+                  
+                  // Device class (offset 12 no perfil ICC)
+                  if (profileStart + 15 < dataView.byteLength) {
+                    const deviceClass = String.fromCharCode(
+                      dataView.getUint8(profileStart + 12),
+                      dataView.getUint8(profileStart + 13),
+                      dataView.getUint8(profileStart + 14),
+                      dataView.getUint8(profileStart + 15)
+                    );
+                    profileData['Device Class'] = deviceClass.trim();
+                  }
+                  
+                  // Color space (offset 16 no perfil ICC)
+                  if (profileStart + 19 < dataView.byteLength) {
+                    const colorSpace = String.fromCharCode(
+                      dataView.getUint8(profileStart + 16),
+                      dataView.getUint8(profileStart + 17),
+                      dataView.getUint8(profileStart + 18),
+                      dataView.getUint8(profileStart + 19)
+                    );
+                    profileData['ColorSpace'] = colorSpace.trim();
+                    
+                    if (colorSpace.includes('RGB')) {
+                      profileData['Color Model'] = 'RGB';
+                    }
+                  }
+                }
+              }
+            }
+          }
+          
+          const segmentLength = dataView.getUint16(offset + 2);
+          if (segmentLength < 2) break;
+          offset += 2 + segmentLength;
+        }
+      }
+      
+      // Procurar por assinatura 'acsp' (perfil ICC) em qualquer lugar do arquivo
+      offset = 0;
+      while (offset < dataView.byteLength - 4) {
+        if (dataView.getUint32(offset) === 0x61637370) { // 'acsp'
+          profileData['ICC Signature'] = 'Found';
+          
+          // Ler informações do perfil ICC
           if (offset >= 36) {
             const profileSize = dataView.getUint32(offset - 36);
-            profileData['Tamanho do Perfil ICC'] = `${profileSize} bytes`;
-            
-            // Ler classe do dispositivo
-            if (offset >= 12) {
-              const deviceClass = String.fromCharCode(
-                dataView.getUint8(offset - 24),
-                dataView.getUint8(offset - 23),
-                dataView.getUint8(offset - 22),
-                dataView.getUint8(offset - 21)
-              );
-              profileData['Classe do Dispositivo'] = deviceClass;
-            }
+            profileData['ICC Profile Size'] = `${profileSize} bytes`;
           }
           
           break;
         }
         offset++;
       }
+      
+      // Analisar componentes de cor JPEG
+      if (dataView.getUint16(0) === 0xFFD8) {
+        offset = 2;
+        while (offset < dataView.byteLength - 10) {
+          const marker = dataView.getUint16(offset);
+          
+          // Frame header markers
+          if (marker === 0xFFC0 || marker === 0xFFC1 || marker === 0xFFC2) {
+            const segmentLength = dataView.getUint16(offset + 2);
+            const segmentStart = offset + 4;
+            
+            if (segmentStart + 6 < dataView.byteLength) {
+              const precision = dataView.getUint8(segmentStart);
+              const height = dataView.getUint16(segmentStart + 1);
+              const width = dataView.getUint16(segmentStart + 3);
+              const numComponents = dataView.getUint8(segmentStart + 5);
+              
+              profileData['Image Precision'] = `${precision} bits`;
+              profileData['Color Components'] = numComponents;
+              
+              if (numComponents === 3) {
+                profileData['Color Model Detection'] = 'YCbCr (3 components)';
+              } else if (numComponents === 1) {
+                profileData['Color Model Detection'] = 'Grayscale';
+              }
+            }
+            break;
+          }
+          
+          const segmentLength = dataView.getUint16(offset + 2);
+          if (segmentLength < 2) break;
+          offset += 2 + segmentLength;
+        }
+      }
+      
+      // Detectar padrões de cor no conteúdo
+      const uint8Array = new Uint8Array(buffer);
+      const sample = uint8Array.slice(0, Math.min(10000, uint8Array.length));
+      
+      // Heurística simples para detectar RGB vs YCbCr
+      let rgbIndicators = 0;
+      let ycbcrIndicators = 0;
+      
+      for (let i = 0; i < sample.length - 2; i++) {
+        const r = sample[i];
+        const g = sample[i + 1]; 
+        const b = sample[i + 2];
+        
+        // Padrões típicos RGB (valores correlacionados)
+        if (Math.abs(r - g) < 10 && Math.abs(g - b) < 10) {
+          rgbIndicators++;
+        }
+        
+        // Padrões típicos YCbCr (primeiro byte Y, outros Cb/Cr)
+        if (r > 16 && r < 235 && (g < 16 || g > 240 || b < 16 || b > 240)) {
+          ycbcrIndicators++;
+        }
+      }
+      
+      const totalSamples = sample.length / 3;
+      if (rgbIndicators / totalSamples > 0.3) {
+        profileData['Content Analysis'] = 'RGB-like patterns detected';
+      } else if (ycbcrIndicators / totalSamples > 0.2) {
+        profileData['Content Analysis'] = 'YCbCr-like patterns detected';
+      }
+      
     } catch (error) {
       console.warn('Erro ao analisar perfil de cor:', error);
     }
@@ -501,77 +650,129 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
     let totalScore = 0;
 
     // Regra 1: Data de alteração diferente da data de criação (+4 Pontos)
-    const lastModified = metadata['Última modificação'] as Date;
-    const created = metadata['Data de criação do objeto'] as Date;
+    const modifyDate = metadata['Última modificação'] as Date;
+    const createDate = metadata['Data de criação do objeto'] as Date;
+    const exifModifyDate = metadata['ModifyDate'];
+    const exifCreateDate = metadata['CreateDate'] || metadata['DateTimeOriginal'];
     
-    if (lastModified && created) {
-      const timeDiff = Math.abs(lastModified.getTime() - created.getTime());
-      const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
-      const passed = daysDiff > 1; // Se a diferença for maior que 1 dia
-      
-      rules.push({
-        name: 'Regra 1',
-        description: 'Data de alteração diferente da data de criação',
-        points: 4,
-        passed,
-        reason: passed ? `Diferença de ${daysDiff.toFixed(1)} dias detectada` : 'Datas são similares'
-      });
-      
-      if (passed) totalScore += 4;
+    let dateDifferenceFound = false;
+    let dateReason = '';
+    
+    if (exifModifyDate && exifCreateDate) {
+      // Comparar datas EXIF
+      if (exifModifyDate !== exifCreateDate) {
+        dateDifferenceFound = true;
+        dateReason = `EXIF ModifyDate (${exifModifyDate}) ≠ CreateDate (${exifCreateDate})`;
+      }
+    } else if (modifyDate && createDate) {
+      // Fallback para datas do sistema
+      const diffMinutes = Math.abs(modifyDate.getTime() - createDate.getTime()) / (1000 * 60);
+      if (diffMinutes > 1) { // Mais de 1 minuto de diferença
+        dateDifferenceFound = true;
+        dateReason = `Modificação do sistema (${modifyDate.toLocaleString()}) ≠ criação (${createDate.toLocaleString()})`;
+      }
     }
+    
+    rules.push({
+      name: 'Regra 1',
+      description: 'Data de alteração diferente da data de criação',
+      points: dateDifferenceFound ? 4 : 0,
+      passed: dateDifferenceFound,
+      reason: dateDifferenceFound ? dateReason : 'Datas de criação e modificação são iguais'
+    });
+    
+    if (dateDifferenceFound) totalScore += 4;
 
     // Regra 2: tem o valor "YCbCr 4:4:4" em algum metadado (+2 Pontos)
-    const hasYCbCr = Object.values(metadata).some(value => 
-      String(value).toLowerCase().includes('ycbcr 4:4:4')
-    );
+    let ycbcrFound = false;
+    let ycbcrReason = '';
+    
+    for (const [key, value] of Object.entries(metadata)) {
+      const valueStr = String(value).toLowerCase();
+      if (valueStr.includes('ycbcr') && (valueStr.includes('4:4:4') || valueStr.includes('444'))) {
+        ycbcrFound = true;
+        ycbcrReason = `Encontrado em ${key}: ${value}`;
+        break;
+      } else if (valueStr.includes('ycbcr4:2:0') || valueStr.includes('ycbcr 4:2:0')) {
+        // Detectar YCbCr mesmo que não seja 4:4:4
+        ycbcrReason = `YCbCr detectado mas não 4:4:4 em ${key}: ${value}`;
+      }
+    }
     
     rules.push({
       name: 'Regra 2',
-      description: 'Contém "YCbCr 4:4:4" nos metadados',
-      points: 2,
-      passed: hasYCbCr,
-      reason: hasYCbCr ? 'Valor "YCbCr 4:4:4" encontrado' : 'Valor não encontrado'
+      description: 'Tem o valor "YCbCr 4:4:4" em algum metadado',
+      points: ycbcrFound ? 2 : 0,
+      passed: ycbcrFound,
+      reason: ycbcrFound ? ycbcrReason : (ycbcrReason || 'YCbCr 4:4:4 não encontrado')
     });
     
-    if (hasYCbCr) totalScore += 2;
+    if (ycbcrFound) totalScore += 2;
 
     // Regra 3: tem o valor "Photoshop" em algum metadado (+4 Pontos)
-    const hasPhotoshop = Object.values(metadata).some(value => 
-      String(value).toLowerCase().includes('photoshop')
-    );
+    let photoshopFound = false;
+    let photoshopReason = '';
+    
+    for (const [key, value] of Object.entries(metadata)) {
+      const valueStr = String(value).toLowerCase();
+      if (valueStr.includes('photoshop') || valueStr.includes('adobe')) {
+        photoshopFound = true;
+        photoshopReason = `Encontrado em ${key}: ${value}`;
+        break;
+      }
+    }
     
     rules.push({
       name: 'Regra 3',
-      description: 'Contém "Photoshop" nos metadados',
-      points: 4,
-      passed: hasPhotoshop,
-      reason: hasPhotoshop ? 'Referência ao Photoshop encontrada' : 'Nenhuma referência ao Photoshop'
+      description: 'Tem o valor "Photoshop" em algum metadado',
+      points: photoshopFound ? 4 : 0,
+      passed: photoshopFound,
+      reason: photoshopFound ? photoshopReason : 'Photoshop/Adobe não encontrado nos metadados'
     });
     
-    if (hasPhotoshop) totalScore += 4;
+    if (photoshopFound) totalScore += 4;
 
     // Regra 4: tem o valor "RGB" em algum metadado (+10 Pontos)
-    const hasRGB = Object.values(metadata).some(value => 
-      String(value).toLowerCase().includes('rgb')
-    );
+    let rgbFound = false;
+    let rgbReason = '';
+    
+    for (const [key, value] of Object.entries(metadata)) {
+      const valueStr = String(value);
+      if (valueStr.includes('RGB') || valueStr.includes('sRGB') || 
+          (valueStr.toLowerCase().includes('colorspace') && valueStr.toLowerCase().includes('rgb'))) {
+        rgbFound = true;
+        rgbReason = `Encontrado em ${key}: ${value}`;
+        break;
+      }
+    }
     
     rules.push({
       name: 'Regra 4',
-      description: 'Contém "RGB" nos metadados',
-      points: 10,
-      passed: hasRGB,
-      reason: hasRGB ? 'Referência ao RGB encontrada' : 'Nenhuma referência ao RGB'
+      description: 'Tem o valor "RGB" em algum metadado',
+      points: rgbFound ? 10 : 0,
+      passed: rgbFound,
+      reason: rgbFound ? rgbReason : 'RGB não encontrado nos metadados'
     });
     
-    if (hasRGB) totalScore += 10;
+    if (rgbFound) totalScore += 10;
 
     // Determinar nível de risco
-    let riskLevel: 'Baixo' | 'Médio' | 'Alto' | 'Muito Alto' = 'Baixo';
-    if (totalScore >= 15) riskLevel = 'Muito Alto';
-    else if (totalScore >= 10) riskLevel = 'Alto';
-    else if (totalScore >= 5) riskLevel = 'Médio';
+    let riskLevel: 'Baixo' | 'Médio' | 'Alto' | 'Muito Alto';
+    if (totalScore === 0) {
+      riskLevel = 'Baixo';
+    } else if (totalScore <= 4) {
+      riskLevel = 'Médio';
+    } else if (totalScore <= 10) {
+      riskLevel = 'Alto';
+    } else {
+      riskLevel = 'Muito Alto';
+    }
 
-    return { totalScore, rules, riskLevel };
+    return {
+      totalScore,
+      rules,
+      riskLevel
+    };
   };
 
   const getIconForKey = (key: string) => {
