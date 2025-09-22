@@ -896,58 +896,14 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
     };
   };
 
-  // Funções auxiliares para verificação de regras
+  // Funções auxiliares para verificação de regras baseadas no relatório ExifTools
   const estimateExpectedFileSize = (metadata: FileMetadata): number | null => {
     const width = metadata['Largura (pixels)'] as number;
     const height = metadata['Altura (pixels)'] as number;
     if (width && height) {
-      // Estimativa baseada em resolução (aproximação)
       return (width * height * 0.3); // Fator de compressão médio JPEG
     }
     return null;
-  };
-
-  const checkProgressiveDCT = (metadata: FileMetadata) => {
-    // Verificar indícios de Progressive DCT nos metadados
-    for (const [key, value] of Object.entries(metadata)) {
-      const valueStr = String(value).toLowerCase();
-      if (valueStr.includes('progressive') || valueStr.includes('prog')) {
-        return { detected: true, evidence: `Encontrado em ${key}: ${value}` };
-      }
-    }
-    return { detected: false, evidence: 'Baseline DCT (padrão câmera)' };
-  };
-
-  const checkYCbCr444 = (metadata: FileMetadata) => {
-    for (const [key, value] of Object.entries(metadata)) {
-      const valueStr = String(value).toLowerCase();
-      if (valueStr.includes('ycbcr') && (valueStr.includes('4:4:4') || valueStr.includes('444'))) {
-        return { detected: true, evidence: `Encontrado em ${key}: ${value}` };
-      }
-    }
-    return { detected: false, evidence: 'YCbCr 4:2:0 ou não detectado' };
-  };
-
-  const checkICCProfile = (metadata: FileMetadata) => {
-    let points = 0;
-    let evidence = 'ICC padrão câmera';
-    
-    for (const [key, value] of Object.entries(metadata)) {
-      const valueStr = String(value).toLowerCase();
-      if (valueStr.includes('hewlett-packard') || valueStr.includes('adobe') || valueStr.includes('hp')) {
-        points = 3;
-        evidence = `ICC HP/Adobe encontrado em ${key}: ${value}`;
-        break;
-      } else if (valueStr.includes('srgb') && !valueStr.includes('google') && !valueStr.includes('apple')) {
-        points = 2;
-        evidence = `ICC genérico regravado em ${key}: ${value}`;
-      } else if (key.toLowerCase().includes('icc') && !value && valueStr === '') {
-        points = 3;
-        evidence = 'ICC ausente';
-      }
-    }
-    
-    return { detected: points > 0, points, evidence };
   };
 
   const checkEXIFMissing = (metadata: FileMetadata) => {
@@ -972,29 +928,107 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
   };
 
   const checkAdobeTags = (metadata: FileMetadata) => {
-    const adobeIndicators = [
-      'app14', 'photoshopquality', 'progressivescans', 'xmp', 'iptc', 'adobe', 
-      'photoshop', 'ps', 'creator tool', 'software', 'history'
+    // Indicadores reais baseados no ExifTools para arquivos editados no Photoshop
+    const realAdobeIndicators = [
+      'app14flags', 'colortransform', 'app14', 'adobe', 'photoshop',
+      'progressive', 'hewlett-packard', 'hp', 'creator', 'software'
     ];
     
     for (const [key, value] of Object.entries(metadata)) {
       const keyStr = key.toLowerCase();
       const valueStr = String(value).toLowerCase();
       
-      // Busca específica por Photoshop primeiro
-      if (valueStr.includes('photoshop') || valueStr.includes('adobe photoshop')) {
-        return { detected: true, evidence: `Photoshop detectado em ${key}: ${value}` };
+      // 1. Busca por ICC Profile Hewlett-Packard (forte indicador Photoshop)
+      if (valueStr.includes('hewlett-packard') || valueStr.includes('hp srgb') || 
+          valueStr.includes('iec61966-2.1')) {
+        return { detected: true, evidence: `ICC Profile Hewlett-Packard detectado em ${key}: ${value}` };
       }
       
-      // Busca geral por outros indicadores Adobe
-      for (const indicator of adobeIndicators) {
+      // 2. Busca por tags APP14 específicas
+      if (keyStr.includes('app14') || valueStr.includes('app14flags') || 
+          valueStr.includes('colortransform')) {
+        return { detected: true, evidence: `Tag Adobe APP14 encontrada em ${key}: ${value}` };
+      }
+      
+      // 3. Busca por Progressive DCT (indicador de reprocessamento)
+      if (valueStr.includes('progressive dct') || valueStr.includes('progressive')) {
+        return { detected: true, evidence: `Progressive DCT detectado em ${key}: ${value}` };
+      }
+      
+      // 4. Busca por outros indicadores Adobe/Photoshop
+      for (const indicator of realAdobeIndicators) {
         if (keyStr.includes(indicator) || valueStr.includes(indicator)) {
-          return { detected: true, evidence: `Tag Adobe encontrada em ${key}: ${value}` };
+          return { detected: true, evidence: `Indicador Adobe encontrado em ${key}: ${value}` };
         }
       }
     }
     
     return { detected: false, evidence: 'Nenhuma tag Adobe/Photoshop detectada' };
+  };
+
+  // Função específica para detectar Progressive DCT
+  const checkProgressiveDCT = (metadata: FileMetadata) => {
+    for (const [key, value] of Object.entries(metadata)) {
+      const valueStr = String(value).toLowerCase();
+      if (valueStr.includes('progressive dct') || 
+          (valueStr.includes('progressive') && valueStr.includes('huffman'))) {
+        return { detected: true, evidence: `Progressive DCT encontrado em ${key}: ${value}` };
+      }
+    }
+    return { detected: false, evidence: 'Baseline DCT (padrão câmera)' };
+  };
+
+  // Função específica para detectar YCbCr 4:4:4
+  const checkYCbCr444 = (metadata: FileMetadata) => {
+    for (const [key, value] of Object.entries(metadata)) {
+      const valueStr = String(value).toLowerCase();
+      // Busca mais específica por YCbCr4:4:4
+      if (valueStr.includes('ycbcr4:4:4') || valueStr.includes('ycbcr 4:4:4') ||
+          (valueStr.includes('ycbcr') && valueStr.includes('4:4:4'))) {
+        return { detected: true, evidence: `YCbCr 4:4:4 encontrado em ${key}: ${value}` };
+      }
+    }
+    return { detected: false, evidence: 'YCbCr 4:2:0 ou não detectado' };
+  };
+
+  // Função específica para detectar ICC Profile Hewlett-Packard
+  const checkICCProfile = (metadata: FileMetadata) => {
+    let points = 0;
+    let evidence = 'ICC padrão câmera';
+    
+    for (const [key, value] of Object.entries(metadata)) {
+      const valueStr = String(value).toLowerCase();
+      
+      // Prioridade máxima: Hewlett-Packard (forte indicador Photoshop)
+      if (valueStr.includes('hewlett-packard') || valueStr.includes('hp srgb') ||
+          valueStr.includes('iec61966-2.1')) {
+        points = 3;
+        evidence = `ICC Hewlett-Packard encontrado em ${key}: ${value}`;
+        break;
+      }
+      // Adobe profiles
+      else if (valueStr.includes('adobe')) {
+        points = 3;
+        evidence = `ICC Adobe encontrado em ${key}: ${value}`;
+      }
+      // Generic sRGB (menor peso)
+      else if (valueStr.includes('srgb') && !valueStr.includes('google') && 
+               !valueStr.includes('apple') && !valueStr.includes('samsung')) {
+        if (points < 2) {
+          points = 2;
+          evidence = `ICC genérico encontrado em ${key}: ${value}`;
+        }
+      }
+      // ICC ausente
+      else if (key.toLowerCase().includes('icc') && (!value || valueStr === '')) {
+        if (points < 3) {
+          points = 3;
+          evidence = 'ICC ausente';
+        }
+      }
+    }
+    
+    return { detected: points > 0, points, evidence };
   };
 
   const checkSoftwareExplicit = (metadata: FileMetadata) => {
