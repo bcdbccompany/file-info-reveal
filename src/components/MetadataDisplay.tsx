@@ -2,6 +2,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { FileText, Calendar, HardDrive, Hash, Image, MapPin, Camera, Palette, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { MetadataService } from '@/services/MetadataService';
+import { useToast } from '@/components/ui/use-toast';
 
 interface FileMetadata {
   [key: string]: string | number | boolean | Date;
@@ -44,6 +46,8 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
   const [metadata, setMetadata] = useState<FileMetadata>({});
   const [isLoading, setIsLoading] = useState(true);
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
+  const [exiftoolAvailable, setExiftoolAvailable] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     extractAllMetadata();
@@ -494,75 +498,82 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
     const allMetadata: FileMetadata = {};
 
     try {
-      // Metadados básicos do arquivo
-      allMetadata['Nome do arquivo'] = file.name;
-      allMetadata['Tamanho do arquivo'] = file.size;
-      allMetadata['Tipo MIME original'] = file.type || 'Não especificado';
-      allMetadata['Última modificação'] = new Date(file.lastModified);
-      allMetadata['Data de criação do objeto'] = new Date();
+      // Primeiro tentar usar ExifTool via Edge Function
+      console.log('Attempting to extract metadata with ExifTool...');
+      const exiftoolResult = await MetadataService.extractMetadataWithExifTool(file);
       
-      const extension = file.name.split('.').pop()?.toLowerCase();
-      allMetadata['Extensão'] = extension || 'Sem extensão';
-      allMetadata['Nome sem extensão'] = file.name.replace(/\.[^/.]+$/, '');
-      
-      if (extension) {
-        allMetadata['Categoria'] = getCategoryFromExtension(extension);
-      }
-
-      // Análise do buffer do arquivo
-      const buffer = await file.arrayBuffer();
-      const uint8Array = new Uint8Array(buffer);
-      
-      // Hashes criptográficos
-      allMetadata['Hash SHA-256'] = await generateHash(buffer, 'SHA-256');
-      allMetadata['Hash SHA-1'] = await generateHash(buffer, 'SHA-1');
-
-      // Extrair dados EXIF para imagens
-      if (file.type.startsWith('image/')) {
-        const exifData = await extractExifData(buffer);
-        Object.assign(allMetadata, exifData);
+      if (exiftoolResult.success && exiftoolResult.metadata) {
+        console.log('ExifTool extraction successful:', exiftoolResult.metadata);
+        setExiftoolAvailable(true);
         
-        // Analisar perfil de cor
-        const colorProfile = analyzeColorProfile(buffer);
-        Object.assign(allMetadata, colorProfile);
-      }
-      
-      // Análise de entropy/randomness
-      const entropy = calculateEntropy(uint8Array);
-      allMetadata['Entropia (bits)'] = entropy.toFixed(4);
-      allMetadata['Compressibilidade estimada'] = entropy > 7 ? 'Baixa' : entropy > 5 ? 'Média' : 'Alta';
+        // Usar metadados do ExifTool diretamente (formato -a -G1 -s)
+        Object.assign(allMetadata, exiftoolResult.metadata);
+        
+        // Adicionar alguns metadados computados
+        allMetadata['Nome do arquivo'] = exiftoolResult.originalFilename || file.name;
+        allMetadata['Tamanho do arquivo'] = exiftoolResult.fileSize || file.size;
+        allMetadata['Tipo MIME original'] = exiftoolResult.mimeType || file.type || 'Não especificado';
+        
+        toast({
+          title: "ExifTool Ativo",
+          description: "Metadados extraídos com ExifTool professional",
+          duration: 3000,
+        });
+        
+      } else {
+        console.log('ExifTool not available, using fallback parser:', exiftoolResult.error);
+        setExiftoolAvailable(false);
+        
+        // Fallback para parser JavaScript
+        const fallbackMetadata = await MetadataService.extractMetadataFallback(file);
+        Object.assign(allMetadata, fallbackMetadata);
+        
+        // Análises adicionais com JavaScript
+        const buffer = await file.arrayBuffer();
+        const uint8Array = new Uint8Array(buffer);
+        
+        // Hashes criptográficos
+        allMetadata['Hash SHA-256'] = await generateHash(buffer, 'SHA-256');
+        allMetadata['Hash SHA-1'] = await generateHash(buffer, 'SHA-1');
+        
+        // Análise de entropy
+        const entropy = calculateEntropy(uint8Array);
+        allMetadata['Entropia (bits)'] = entropy.toFixed(4);
+        allMetadata['Compressibilidade estimada'] = entropy > 7 ? 'Baixa' : entropy > 5 ? 'Média' : 'Alta';
 
-      // Análise de bytes
-      allMetadata['Primeiro byte (hex)'] = uint8Array[0]?.toString(16).padStart(2, '0').toUpperCase() || '00';
-      allMetadata['Último byte (hex)'] = uint8Array[uint8Array.length - 1]?.toString(16).padStart(2, '0').toUpperCase() || '00';
-      allMetadata['Bytes nulos'] = uint8Array.filter(b => b === 0).length;
-      allMetadata['Bytes únicos'] = new Set(uint8Array).size;
+        // Análise de bytes
+        allMetadata['Primeiro byte (hex)'] = uint8Array[0]?.toString(16).padStart(2, '0').toUpperCase() || '00';
+        allMetadata['Último byte (hex)'] = uint8Array[uint8Array.length - 1]?.toString(16).padStart(2, '0').toUpperCase() || '00';
+        allMetadata['Bytes nulos'] = uint8Array.filter(b => b === 0).length;
+        allMetadata['Bytes únicos'] = new Set(uint8Array).size;
 
-      // Para imagens, extrair dimensões
-      if (file.type.startsWith('image/')) {
-        try {
-          const dimensions = await analyzeImageDimensions(file);
-          allMetadata['Largura (pixels)'] = dimensions.width;
-          allMetadata['Altura (pixels)'] = dimensions.height;
-          allMetadata['Megapixels'] = ((dimensions.width * dimensions.height) / 1000000).toFixed(2);
-          allMetadata['Proporção'] = (dimensions.width / dimensions.height).toFixed(2);
-          allMetadata['Orientação'] = dimensions.width > dimensions.height ? 'Paisagem' : dimensions.height > dimensions.width ? 'Retrato' : 'Quadrada';
-        } catch (error) {
-          allMetadata['Erro dimensões'] = 'Não foi possível obter';
+        // Para imagens, extrair EXIF com parser JavaScript
+        if (file.type.startsWith('image/')) {
+          const exifData = await extractExifData(buffer);
+          Object.assign(allMetadata, exifData);
+          
+          const colorProfile = analyzeColorProfile(buffer);
+          Object.assign(allMetadata, colorProfile);
         }
-      }
 
-      // Análise específica para diferentes tipos
-      if (file.type.startsWith('text/') || extension === 'txt' || extension === 'csv') {
-        try {
-          const text = await file.text();
-          allMetadata['Linhas de texto'] = text.split('\n').length;
-          allMetadata['Caracteres'] = text.length;
-          allMetadata['Palavras estimadas'] = text.split(/\s+/).filter(w => w.length > 0).length;
-          allMetadata['Encoding detectado'] = detectTextEncoding(uint8Array);
-        } catch (error) {
-          allMetadata['Erro análise texto'] = 'Não foi possível analisar';
+        // Análise específica para diferentes tipos
+        if (file.type.startsWith('text/') || file.name.endsWith('.txt') || file.name.endsWith('.csv')) {
+          try {
+            const text = await file.text();
+            allMetadata['Linhas de texto'] = text.split('\n').length;
+            allMetadata['Caracteres'] = text.length;
+            allMetadata['Palavras estimadas'] = text.split(/\s+/).filter(w => w.length > 0).length;
+            allMetadata['Encoding detectado'] = detectTextEncoding(uint8Array);
+          } catch (error) {
+            allMetadata['Erro análise texto'] = 'Não foi possível analisar';
+          }
         }
+
+        toast({
+          title: "Parser JavaScript",
+          description: "ExifTool não disponível, usando parser JavaScript",
+          duration: 3000,
+        });
       }
 
       // WebkitRelativePath
@@ -577,12 +588,20 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
 
       setMetadata(allMetadata);
       
-      // Calcular pontuação de alteração
+      // Calcular pontuação de alteração baseada na matriz de validação
       const score = calculateAlterationScore(allMetadata);
       setScoreResult(score);
+      
     } catch (error) {
       console.error('Erro ao extrair metadados:', error);
       setMetadata({ 'Erro': 'Falha na extração de metadados' });
+      
+      toast({
+        title: "Erro na Extração",
+        description: "Falhou ao extrair metadados do arquivo",
+        variant: "destructive",
+        duration: 5000,
+      });
     } finally {
       setIsLoading(false);
     }
@@ -1225,9 +1244,17 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
         <CardTitle className="text-2xl font-bold text-foreground flex items-center gap-2">
           <FileText className="h-6 w-6 text-primary" />
           Metadados do Arquivo
+          {exiftoolAvailable && (
+            <Badge variant="outline" className="text-xs ml-2">
+              ExifTool Professional
+            </Badge>
+          )}
         </CardTitle>
         <p className="text-muted-foreground">
-          Informações detalhadas sobre o arquivo selecionado
+          {exiftoolAvailable 
+            ? "Metadados extraídos com ExifTool (-a -G1 -s) - Análise forense profissional"
+            : "Informações detalhadas extraídas com parser JavaScript"
+          }
         </p>
       </CardHeader>
       <CardContent>
