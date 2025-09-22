@@ -7,18 +7,33 @@ interface FileMetadata {
   [key: string]: string | number | boolean | Date;
 }
 
-interface ScoreRule {
-  name: string;
-  description: string;
+// Comprehensive scoring interfaces based on validation matrix
+interface RuleResult {
+  category: string;
+  detected: boolean;
   points: number;
-  passed: boolean;
-  reason?: string;
+  weight: 'Fraco' | 'Médio' | 'Forte' | 'Muito Forte';
+  description: string;
+  evidence: string;
+}
+
+interface CoOccurrenceBonus {
+  combination: string;
+  detected: boolean;
+  points: number;
+  description: string;
 }
 
 interface ScoreResult {
   totalScore: number;
-  rules: ScoreRule[];
-  riskLevel: 'Baixo' | 'Médio' | 'Alto' | 'Muito Alto';
+  adjustedScore: number;
+  riskLevel: string;
+  classification: string;
+  confidenceLevel: string;
+  isDigitalTransport: boolean;
+  rules: RuleResult[];
+  bonuses: CoOccurrenceBonus[];
+  explanation: string;
 }
 
 interface MetadataDisplayProps {
@@ -646,133 +661,465 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
   };
 
   const calculateAlterationScore = (metadata: FileMetadata): ScoreResult => {
-    const rules: ScoreRule[] = [];
+    const rules: RuleResult[] = [];
     let totalScore = 0;
-
-    // Regra 1: Data de alteração diferente da data de criação (+4 Pontos)
-    const modifyDate = metadata['Última modificação'] as Date;
-    const createDate = metadata['Data de criação do objeto'] as Date;
-    const exifModifyDate = metadata['ModifyDate'];
-    const exifCreateDate = metadata['CreateDate'] || metadata['DateTimeOriginal'];
     
-    let dateDifferenceFound = false;
-    let dateReason = '';
+    // TABELA DE PESOS - Consolidada da matriz de validação
     
-    if (exifModifyDate && exifCreateDate) {
-      // Comparar datas EXIF
-      if (exifModifyDate !== exifCreateDate) {
-        dateDifferenceFound = true;
-        dateReason = `EXIF ModifyDate (${exifModifyDate}) ≠ CreateDate (${exifCreateDate})`;
-      }
-    } else if (modifyDate && createDate) {
-      // Fallback para datas do sistema
-      const diffMinutes = Math.abs(modifyDate.getTime() - createDate.getTime()) / (1000 * 60);
-      if (diffMinutes > 1) { // Mais de 1 minuto de diferença
-        dateDifferenceFound = true;
-        dateReason = `Modificação do sistema (${modifyDate.toLocaleString()}) ≠ criação (${createDate.toLocaleString()})`;
-      }
-    }
+    // 1. Tamanho do Arquivo (Peso: 1 - Fraco)
+    const fileSize = metadata['Tamanho do arquivo'] as number;
+    const expectedSize = estimateExpectedFileSize(metadata);
+    const sizeDifference = expectedSize ? Math.abs((fileSize - expectedSize) / expectedSize) : 0;
+    const sizeSignificant = sizeDifference > 0.3; // 30% de diferença
     
     rules.push({
-      name: 'Regra 1',
-      description: 'Data de alteração diferente da data de criação',
-      points: dateDifferenceFound ? 4 : 0,
-      passed: dateDifferenceFound,
-      reason: dateDifferenceFound ? dateReason : 'Datas de criação e modificação são iguais'
+      category: 'Tamanho do Arquivo',
+      detected: sizeSignificant,
+      points: sizeSignificant ? 1 : 0,
+      weight: 'Fraco',
+      description: 'Aumento/redução significativa sem justificativa técnica',
+      evidence: sizeSignificant ? `Diferença de ${(sizeDifference * 100).toFixed(1)}% do esperado` : 'Tamanho coerente'
     });
+    if (sizeSignificant) totalScore += 1;
     
-    if (dateDifferenceFound) totalScore += 4;
+    // 2. Processo de Codificação (Peso: 3 - Médio)
+    const progressiveDCT = checkProgressiveDCT(metadata);
+    rules.push({
+      category: 'Processo de Codificação',
+      detected: progressiveDCT.detected,
+      points: progressiveDCT.detected ? 3 : 0,
+      weight: 'Médio',
+      description: 'Progressive DCT indica reprocessamento',
+      evidence: progressiveDCT.evidence
+    });
+    if (progressiveDCT.detected) totalScore += 3;
+    
+    // 3. Subamostragem de Cor (Peso: 3 - Médio)
+    const ycbcr444 = checkYCbCr444(metadata);
+    rules.push({
+      category: 'Subamostragem de Cor',
+      detected: ycbcr444.detected,
+      points: ycbcr444.detected ? 3 : 0,
+      weight: 'Médio',
+      description: 'YCbCr 4:4:4 é incomum em câmeras',
+      evidence: ycbcr444.evidence
+    });
+    if (ycbcr444.detected) totalScore += 3;
+    
+    // 4. Perfis ICC (Peso: 3 - Médio)
+    const iccProfile = checkICCProfile(metadata);
+    rules.push({
+      category: 'Perfis ICC',
+      detected: iccProfile.detected,
+      points: iccProfile.detected ? iccProfile.points : 0,
+      weight: 'Médio',
+      description: 'ICC HP/Adobe ou ausente indica edição',
+      evidence: iccProfile.evidence
+    });
+    if (iccProfile.detected) totalScore += iccProfile.points;
+    
+    // 5. EXIF (Peso: 4 - Forte)
+    const exifMissing = checkEXIFMissing(metadata);
+    rules.push({
+      category: 'EXIF (Make/Model/ISO/etc.)',
+      detected: exifMissing.detected,
+      points: exifMissing.detected ? 4 : 0,
+      weight: 'Forte',
+      description: 'Ausência total é sinal fortíssimo em Online/IA',
+      evidence: exifMissing.evidence
+    });
+    if (exifMissing.detected) totalScore += 4;
+    
+    // 6. Tags Adobe/Photoshop (Peso: 3 - Médio)
+    const adobeTags = checkAdobeTags(metadata);
+    rules.push({
+      category: 'Tags Adobe/Photoshop',
+      detected: adobeTags.detected,
+      points: adobeTags.detected ? 3 : 0,
+      weight: 'Médio',
+      description: 'APP14, PhotoshopQuality típicos de Photoshop',
+      evidence: adobeTags.evidence
+    });
+    if (adobeTags.detected) totalScore += 3;
+    
+    // 7. Software (Peso: 4 - Forte)
+    const softwareExplicit = checkSoftwareExplicit(metadata);
+    rules.push({
+      category: 'Software (explícito)',
+      detected: softwareExplicit.detected,
+      points: softwareExplicit.detected ? 4 : 0,
+      weight: 'Forte',
+      description: 'Indício direto de edição no campo Software',
+      evidence: softwareExplicit.evidence
+    });
+    if (softwareExplicit.detected) totalScore += 4;
+    
+    // 8. Software (vazio + padrões) (Peso: 2 - Médio)
+    const softwarePattern = checkSoftwarePattern(metadata);
+    rules.push({
+      category: 'Software (padrão editor online)',
+      detected: softwarePattern.detected,
+      points: softwarePattern.detected ? 2 : 0,
+      weight: 'Médio',
+      description: 'Campo vazio + EXIF ausente/ICC genérico',
+      evidence: softwarePattern.evidence
+    });
+    if (softwarePattern.detected) totalScore += 2;
+    
+    // 9. Datas (Peso: 3 - Médio)
+    const dateInconsistency = checkDateInconsistency(metadata);
+    rules.push({
+      category: 'Datas (CreateDate/ModifyDate)',
+      detected: dateInconsistency.detected,
+      points: dateInconsistency.detected ? 3 : 0,
+      weight: 'Médio',
+      description: 'Incoerências são fortes indícios',
+      evidence: dateInconsistency.evidence
+    });
+    if (dateInconsistency.detected) totalScore += 3;
+    
+    // 10. XMP/Tags IA (Peso: 5 - Muito Forte)
+    const aiTags = checkAITags(metadata);
+    rules.push({
+      category: 'XMP/Tags IA explícitas',
+      detected: aiTags.detected,
+      points: aiTags.detected ? 5 : 0,
+      weight: 'Muito Forte',
+      description: 'Prova direta de IA (Google AI, etc.)',
+      evidence: aiTags.evidence
+    });
+    if (aiTags.detected) totalScore += 5;
+    
+    // 11. C2PA/JUMBF (Peso: 5 - Muito Forte)
+    const c2paTags = checkC2PA(metadata);
+    rules.push({
+      category: 'C2PA/JUMBF Manifest',
+      detected: c2paTags.detected,
+      points: c2paTags.detected ? 5 : 0,
+      weight: 'Muito Forte',
+      description: 'Evidência inequívoca de processamento IA',
+      evidence: c2paTags.evidence
+    });
+    if (c2paTags.detected) totalScore += 5;
+    
+    // BÔNUS DE CO-OCORRÊNCIA
+    const bonuses: CoOccurrenceBonus[] = [];
+    
+    // Bônus 1: Progressive DCT + YCbCr 4:4:4 (+2)
+    if (progressiveDCT.detected && ycbcr444.detected) {
+      bonuses.push({
+        combination: 'Progressive DCT + YCbCr 4:4:4',
+        detected: true,
+        points: 2,
+        description: 'Indica recompressão típica de software de edição'
+      });
+      totalScore += 2;
+    }
+    
+    // Bônus 2: ICC HP/Adobe + Tags Adobe/Photoshop (+2)
+    if (iccProfile.detected && adobeTags.detected) {
+      bonuses.push({
+        combination: 'Perfis ICC HP/Adobe + Tags Adobe/Photoshop',
+        detected: true,
+        points: 2,
+        description: 'Padrão clássico de Photoshop/reexports Adobe'
+      });
+      totalScore += 2;
+    }
+    
+    // Bônus 3: Datas incoerentes + Edição técnica (+2)
+    if (dateInconsistency.detected && (progressiveDCT.detected || ycbcr444.detected || iccProfile.detected || adobeTags.detected)) {
+      bonuses.push({
+        combination: 'Datas incoerentes + Edição técnica',
+        detected: true,
+        points: 2,
+        description: 'Combinação de alteração temporal com edição técnica'
+      });
+      totalScore += 2;
+    }
+    
+    // Bônus 4: EXIF preservado + C2PA IA (+5)
+    if (!exifMissing.detected && c2paTags.detected) {
+      bonuses.push({
+        combination: 'EXIF preservado + C2PA IA',
+        detected: true,
+        points: 5,
+        description: 'Preservação de EXIF + Inserção explícita de C2PA IA'
+      });
+      totalScore += 5;
+    }
+    
+    // VERIFICAÇÃO DE TRANSPORTE DIGITAL
+    const isDigitalTransport = checkDigitalTransport(metadata, rules);
+    let adjustedScore = totalScore;
+    
+    // Aplicar exceção de transporte digital
+    if (isDigitalTransport && totalScore > 7) {
+      adjustedScore = Math.min(totalScore, 7); // Máximo 7 pontos para transporte digital
+    }
+    
+    // CLASSIFICAÇÃO FINAL
+    let classification: string;
+    let riskLevel: string;
+    let confidenceLevel: string;
+    
+    if (adjustedScore <= 3) {
+      classification = 'Baixo (normal)';
+      riskLevel = 'Baixo';
+      confidenceLevel = 'Alto';
+    } else if (adjustedScore <= 7) {
+      classification = 'Moderado (suspeita moderada)';
+      riskLevel = 'Moderado';
+      confidenceLevel = isDigitalTransport ? 'Moderado' : 'Alto';
+    } else if (adjustedScore <= 12) {
+      classification = 'Forte (suspeito)';
+      riskLevel = 'Alto';
+      confidenceLevel = 'Alto';
+    } else {
+      classification = 'Muito Forte (provável fraude)';
+      riskLevel = 'Muito Alto';
+      confidenceLevel = 'Muito Alto';
+    }
+    
+    const explanation = generateExplanation(adjustedScore, isDigitalTransport, bonuses);
+    
+    return {
+      totalScore,
+      adjustedScore,
+      classification,
+      riskLevel,
+      confidenceLevel,
+      isDigitalTransport,
+      rules: rules.filter(r => r.detected || r.points > 0), // Mostrar apenas regras relevantes
+      bonuses,
+      explanation
+    };
+  };
 
-    // Regra 2: tem o valor "YCbCr 4:4:4" em algum metadado (+2 Pontos)
-    let ycbcrFound = false;
-    let ycbcrReason = '';
-    
+  // Funções auxiliares para verificação de regras
+  const estimateExpectedFileSize = (metadata: FileMetadata): number | null => {
+    const width = metadata['Largura (pixels)'] as number;
+    const height = metadata['Altura (pixels)'] as number;
+    if (width && height) {
+      // Estimativa baseada em resolução (aproximação)
+      return (width * height * 0.3); // Fator de compressão médio JPEG
+    }
+    return null;
+  };
+
+  const checkProgressiveDCT = (metadata: FileMetadata) => {
+    // Verificar indícios de Progressive DCT nos metadados
+    for (const [key, value] of Object.entries(metadata)) {
+      const valueStr = String(value).toLowerCase();
+      if (valueStr.includes('progressive') || valueStr.includes('prog')) {
+        return { detected: true, evidence: `Encontrado em ${key}: ${value}` };
+      }
+    }
+    return { detected: false, evidence: 'Baseline DCT (padrão câmera)' };
+  };
+
+  const checkYCbCr444 = (metadata: FileMetadata) => {
     for (const [key, value] of Object.entries(metadata)) {
       const valueStr = String(value).toLowerCase();
       if (valueStr.includes('ycbcr') && (valueStr.includes('4:4:4') || valueStr.includes('444'))) {
-        ycbcrFound = true;
-        ycbcrReason = `Encontrado em ${key}: ${value}`;
-        break;
-      } else if (valueStr.includes('ycbcr4:2:0') || valueStr.includes('ycbcr 4:2:0')) {
-        // Detectar YCbCr mesmo que não seja 4:4:4
-        ycbcrReason = `YCbCr detectado mas não 4:4:4 em ${key}: ${value}`;
+        return { detected: true, evidence: `Encontrado em ${key}: ${value}` };
       }
     }
-    
-    rules.push({
-      name: 'Regra 2',
-      description: 'Tem o valor "YCbCr 4:4:4" em algum metadado',
-      points: ycbcrFound ? 2 : 0,
-      passed: ycbcrFound,
-      reason: ycbcrFound ? ycbcrReason : (ycbcrReason || 'YCbCr 4:4:4 não encontrado')
-    });
-    
-    if (ycbcrFound) totalScore += 2;
+    return { detected: false, evidence: 'YCbCr 4:2:0 ou não detectado' };
+  };
 
-    // Regra 3: tem o valor "Photoshop" em algum metadado (+4 Pontos)
-    let photoshopFound = false;
-    let photoshopReason = '';
+  const checkICCProfile = (metadata: FileMetadata) => {
+    let points = 0;
+    let evidence = 'ICC padrão câmera';
     
     for (const [key, value] of Object.entries(metadata)) {
       const valueStr = String(value).toLowerCase();
-      if (valueStr.includes('photoshop') || valueStr.includes('adobe')) {
-        photoshopFound = true;
-        photoshopReason = `Encontrado em ${key}: ${value}`;
+      if (valueStr.includes('hewlett-packard') || valueStr.includes('adobe') || valueStr.includes('hp')) {
+        points = 3;
+        evidence = `ICC HP/Adobe encontrado em ${key}: ${value}`;
         break;
+      } else if (valueStr.includes('srgb') && !valueStr.includes('google') && !valueStr.includes('apple')) {
+        points = 2;
+        evidence = `ICC genérico regravado em ${key}: ${value}`;
+      } else if (key.toLowerCase().includes('icc') && !value && valueStr === '') {
+        points = 3;
+        evidence = 'ICC ausente';
       }
     }
     
-    rules.push({
-      name: 'Regra 3',
-      description: 'Tem o valor "Photoshop" em algum metadado',
-      points: photoshopFound ? 4 : 0,
-      passed: photoshopFound,
-      reason: photoshopFound ? photoshopReason : 'Photoshop/Adobe não encontrado nos metadados'
-    });
-    
-    if (photoshopFound) totalScore += 4;
+    return { detected: points > 0, points, evidence };
+  };
 
-    // Regra 4: tem o valor "RGB" em algum metadado (+10 Pontos)
-    let rgbFound = false;
-    let rgbReason = '';
+  const checkEXIFMissing = (metadata: FileMetadata) => {
+    const criticalEXIF = ['Make', 'Model', 'ISO', 'DateTimeOriginal', 'CreateDate'];
+    let missingCount = 0;
+    const missing = [];
+    
+    for (const field of criticalEXIF) {
+      if (!metadata[field]) {
+        missingCount++;
+        missing.push(field);
+      }
+    }
+    
+    const detected = missingCount >= 3; // Se 3+ campos críticos estão ausentes
+    return {
+      detected,
+      evidence: detected 
+        ? `EXIF crítico ausente: ${missing.join(', ')}` 
+        : 'EXIF presente e completo'
+    };
+  };
+
+  const checkAdobeTags = (metadata: FileMetadata) => {
+    const adobeIndicators = ['app14', 'photoshopquality', 'progressivescans', 'xmp', 'iptc', 'adobe'];
     
     for (const [key, value] of Object.entries(metadata)) {
-      const valueStr = String(value);
-      if (valueStr.includes('RGB') || valueStr.includes('sRGB') || 
-          (valueStr.toLowerCase().includes('colorspace') && valueStr.toLowerCase().includes('rgb'))) {
-        rgbFound = true;
-        rgbReason = `Encontrado em ${key}: ${value}`;
-        break;
+      const keyStr = key.toLowerCase();
+      const valueStr = String(value).toLowerCase();
+      
+      for (const indicator of adobeIndicators) {
+        if (keyStr.includes(indicator) || valueStr.includes(indicator)) {
+          return { detected: true, evidence: `Tag Adobe encontrada em ${key}: ${value}` };
+        }
       }
     }
     
-    rules.push({
-      name: 'Regra 4',
-      description: 'Tem o valor "RGB" em algum metadado',
-      points: rgbFound ? 10 : 0,
-      passed: rgbFound,
-      reason: rgbFound ? rgbReason : 'RGB não encontrado nos metadados'
-    });
-    
-    if (rgbFound) totalScore += 10;
+    return { detected: false, evidence: 'Nenhuma tag Adobe detectada' };
+  };
 
-    // Determinar nível de risco
-    let riskLevel: 'Baixo' | 'Médio' | 'Alto' | 'Muito Alto';
-    if (totalScore === 0) {
-      riskLevel = 'Baixo';
-    } else if (totalScore <= 4) {
-      riskLevel = 'Médio';
-    } else if (totalScore <= 10) {
-      riskLevel = 'Alto';
-    } else {
-      riskLevel = 'Muito Alto';
+  const checkSoftwareExplicit = (metadata: FileMetadata) => {
+    const software = metadata['Software'] as string;
+    if (software) {
+      const softwareStr = software.toLowerCase();
+      const editors = ['photoshop', 'photopea', 'canva', 'pixlr', 'fotor', 'befunky', 'gimp', 'ai'];
+      
+      for (const editor of editors) {
+        if (softwareStr.includes(editor)) {
+          return { detected: true, evidence: `Editor detectado: ${software}` };
+        }
+      }
     }
+    
+    return { detected: false, evidence: 'Software não detectado ou firmware câmera' };
+  };
 
-    return {
-      totalScore,
-      rules,
-      riskLevel
-    };
+  const checkSoftwarePattern = (metadata: FileMetadata) => {
+    const software = metadata['Software'];
+    const exifMissing = !metadata['Make'] || !metadata['Model'];
+    const iccGeneric = checkICCProfile(metadata).points > 0;
+    
+    if (!software && exifMissing && iccGeneric) {
+      return { 
+        detected: true, 
+        evidence: 'Padrão editor online: Software vazio + EXIF ausente + ICC genérico' 
+      };
+    }
+    
+    return { detected: false, evidence: 'Padrão não corresponde a editor online' };
+  };
+
+  const checkDateInconsistency = (metadata: FileMetadata) => {
+    const createDate = metadata['CreateDate'] || metadata['DateTimeOriginal'];
+    const modifyDate = metadata['ModifyDate'];
+    const fileModify = metadata['Última modificação'] as Date;
+    
+    if (createDate && modifyDate && createDate !== modifyDate) {
+      return {
+        detected: true,
+        evidence: `EXIF CreateDate (${createDate}) ≠ ModifyDate (${modifyDate})`
+      };
+    }
+    
+    if (fileModify && createDate) {
+      // Comparar timestamp do arquivo com EXIF
+      const createStr = String(createDate);
+      if (!createStr.includes(fileModify.getFullYear().toString())) {
+        return {
+          detected: true,
+          evidence: `Data arquivo (${fileModify.getFullYear()}) ≠ EXIF (${createStr})`
+        };
+      }
+    }
+    
+    return { detected: false, evidence: 'Datas coerentes' };
+  };
+
+  const checkAITags = (metadata: FileMetadata) => {
+    const aiIndicators = [
+      'google ai', 'edited with google ai', 'compositewithtrainedalgorithmic',
+      'ai generated', 'artificial intelligence', 'machine learning',
+      'samsung ai', 'enhanced by ai'
+    ];
+    
+    for (const [key, value] of Object.entries(metadata)) {
+      const valueStr = String(value).toLowerCase();
+      
+      for (const indicator of aiIndicators) {
+        if (valueStr.includes(indicator)) {
+          return { detected: true, evidence: `Tag IA encontrada em ${key}: ${value}` };
+        }
+      }
+    }
+    
+    return { detected: false, evidence: 'Nenhuma tag IA detectada' };
+  };
+
+  const checkC2PA = (metadata: FileMetadata) => {
+    const c2paIndicators = ['c2pa', 'jumbf', 'cbor', 'manifest', 'content credentials'];
+    
+    for (const [key, value] of Object.entries(metadata)) {
+      const keyStr = key.toLowerCase();
+      const valueStr = String(value).toLowerCase();
+      
+      for (const indicator of c2paIndicators) {
+        if (keyStr.includes(indicator) || valueStr.includes(indicator)) {
+          return { detected: true, evidence: `C2PA/JUMBF encontrado em ${key}: ${value}` };
+        }
+      }
+    }
+    
+    return { detected: false, evidence: 'Nenhum manifesto C2PA detectado' };
+  };
+
+  const checkDigitalTransport = (metadata: FileMetadata, rules: RuleResult[]): boolean => {
+    // Verificar padrão de transporte digital puro:
+    // - EXIF ausente
+    // - Redução de resolução/tamanho proporcional
+    // - Perfis ICC mantidos ou genéricos
+    // - Subamostragem mantida em 4:2:0
+    // - Campo Software ausente
+    
+    const exifMissing = rules.find(r => r.category === 'EXIF (Make/Model/ISO/etc.)')?.detected || false;
+    const softwareEmpty = !metadata['Software'];
+    const ycbcr420 = !rules.find(r => r.category === 'Subamostragem de Cor')?.detected; // Se não detectou 4:4:4, assume 4:2:0
+    const iccMaintained = rules.find(r => r.category === 'Perfis ICC')?.points <= 2; // Só genérico, não HP/Adobe
+    
+    return exifMissing && softwareEmpty && ycbcr420 && iccMaintained;
+  };
+
+  const generateExplanation = (score: number, isDigitalTransport: boolean, bonuses: CoOccurrenceBonus[]): string => {
+    let explanation = `Pontuação total: ${score} pontos. `;
+    
+    if (isDigitalTransport) {
+      explanation += 'Padrão compatível com transporte digital (WhatsApp, Telegram, etc.). ';
+    }
+    
+    if (bonuses.length > 0) {
+      explanation += `Detectados ${bonuses.length} padrão(ões) de co-ocorrência que reforçam indícios. `;
+    }
+    
+    if (score <= 3) {
+      explanation += 'Arquivo apresenta características normais de documento original.';
+    } else if (score <= 7) {
+      explanation += 'Indícios isolados ou compatível com compressão/transporte digital.';
+    } else if (score <= 12) {
+      explanation += 'Conjunto consistente de indícios técnicos de manipulação.';
+    } else {
+      explanation += 'Múltiplos indícios técnicos indicam alta probabilidade de manipulação.';
+    }
+    
+    return explanation;
   };
 
   const getIconForKey = (key: string) => {
@@ -882,70 +1229,127 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-xl font-bold text-foreground flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5 text-primary" />
-                Análise de Alteração
+                Análise de Alteração - Matriz de Validação
               </h3>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                <Badge variant="outline" className="text-xs">
+                  {scoreResult.confidenceLevel} Confiança
+                </Badge>
                 <Badge 
                   variant={
                     scoreResult.riskLevel === 'Muito Alto' ? 'destructive' : 
                     scoreResult.riskLevel === 'Alto' ? 'destructive' :
-                    scoreResult.riskLevel === 'Médio' ? 'secondary' : 'outline'
+                    scoreResult.riskLevel === 'Moderado' ? 'secondary' : 'outline'
                   }
                   className="text-sm font-semibold"
                 >
-                  {scoreResult.riskLevel}
+                  {scoreResult.classification}
                 </Badge>
                 <span className="text-2xl font-bold text-primary">
-                  {scoreResult.totalScore} pts
+                  {scoreResult.adjustedScore} pts
                 </span>
               </div>
             </div>
+
+            {scoreResult.isDigitalTransport && (
+              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <p className="text-sm text-blue-800 dark:text-blue-200">
+                  <strong>Transporte Digital Detectado:</strong> Padrão compatível com compressão por WhatsApp, Telegram ou similar. 
+                  Pontuação limitada a máximo 7 pontos.
+                </p>
+              </div>
+            )}
             
-            <div className="grid gap-3">
-              {scoreResult.rules.map((rule, index) => (
-                <div
-                  key={index}
-                  className={`flex items-center justify-between p-4 rounded-lg border transition-colors ${
-                    rule.passed 
-                      ? 'bg-destructive/10 border-destructive/20' 
-                      : 'bg-muted/30 border-border'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    {rule.passed ? (
-                      <AlertTriangle className="h-4 w-4 text-destructive flex-shrink-0" />
-                    ) : (
-                      <CheckCircle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                    )}
-                    <div>
-                      <span className="font-medium text-foreground">{rule.name}</span>
-                      <p className="text-sm text-muted-foreground">{rule.description}</p>
-                      {rule.reason && (
-                        <p className="text-xs text-muted-foreground mt-1 italic">
-                          {rule.reason}
-                        </p>
+            <div className="mb-6">
+              <h4 className="font-semibold text-foreground mb-3">Detalhamento por Categoria:</h4>
+              <div className="grid gap-3">
+                {scoreResult.rules.map((rule, index) => (
+                  <div
+                    key={index}
+                    className={`flex items-center justify-between p-4 rounded-lg border transition-colors ${
+                      rule.detected 
+                        ? 'bg-destructive/10 border-destructive/20' 
+                        : 'bg-muted/30 border-border'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      {rule.detected ? (
+                        <AlertTriangle className="h-4 w-4 text-destructive flex-shrink-0" />
+                      ) : (
+                        <CheckCircle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                       )}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-foreground">{rule.category}</span>
+                          <Badge variant="outline" className="text-xs">
+                            {rule.weight}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground">{rule.description}</p>
+                        <p className="text-xs text-muted-foreground mt-1 italic">
+                          {rule.evidence}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge 
+                        variant={rule.detected ? 'destructive' : 'outline'}
+                        className="text-xs"
+                      >
+                        {rule.detected ? `+${rule.points}` : '0'} pts
+                      </Badge>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge 
-                      variant={rule.passed ? 'destructive' : 'outline'}
-                      className="text-xs"
-                    >
-                      {rule.passed ? `+${rule.points}` : '0'} pts
-                    </Badge>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
+
+            {scoreResult.bonuses.length > 0 && (
+              <div className="mb-6">
+                <h4 className="font-semibold text-foreground mb-3">Bônus de Co-ocorrência:</h4>
+                <div className="grid gap-2">
+                  {scoreResult.bonuses.map((bonus, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-lg"
+                    >
+                      <div>
+                        <span className="font-medium text-orange-800 dark:text-orange-200">{bonus.combination}</span>
+                        <p className="text-sm text-orange-700 dark:text-orange-300">{bonus.description}</p>
+                      </div>
+                      <Badge variant="outline" className="text-xs">
+                        +{bonus.points} pts
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             
-            <div className="mt-4 p-4 bg-muted/20 rounded-lg">
-              <p className="text-sm text-muted-foreground text-center">
-                <span className="font-semibold text-foreground">Pontuação total: {scoreResult.totalScore} pontos</span>
-                <span className="block mt-1">
-                  Quanto maior a pontuação, maior a probabilidade de alteração do arquivo
+            <div className="p-4 bg-muted/20 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-semibold text-foreground">
+                  Pontuação: {scoreResult.totalScore} pts 
+                  {scoreResult.adjustedScore !== scoreResult.totalScore && (
+                    <span className="text-muted-foreground">
+                      → {scoreResult.adjustedScore} pts (ajustado)
+                    </span>
+                  )}
                 </span>
+                <Badge 
+                  variant={scoreResult.riskLevel === 'Muito Alto' ? 'destructive' : 
+                          scoreResult.riskLevel === 'Alto' ? 'destructive' :
+                          scoreResult.riskLevel === 'Moderado' ? 'secondary' : 'outline'}
+                >
+                  {scoreResult.riskLevel}
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {scoreResult.explanation}
               </p>
+              <div className="mt-2 text-xs text-muted-foreground">
+                <strong>Escala:</strong> 0-3 (Baixo) | 4-7 (Moderado) | 8-12 (Alto) | 13+ (Muito Alto)
+              </div>
             </div>
           </div>
         )}
