@@ -972,12 +972,21 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
   };
 
   const checkAdobeTags = (metadata: FileMetadata) => {
-    const adobeIndicators = ['app14', 'photoshopquality', 'progressivescans', 'xmp', 'iptc', 'adobe'];
+    const adobeIndicators = [
+      'app14', 'photoshopquality', 'progressivescans', 'xmp', 'iptc', 'adobe', 
+      'photoshop', 'ps', 'creator tool', 'software', 'history'
+    ];
     
     for (const [key, value] of Object.entries(metadata)) {
       const keyStr = key.toLowerCase();
       const valueStr = String(value).toLowerCase();
       
+      // Busca específica por Photoshop primeiro
+      if (valueStr.includes('photoshop') || valueStr.includes('adobe photoshop')) {
+        return { detected: true, evidence: `Photoshop detectado em ${key}: ${value}` };
+      }
+      
+      // Busca geral por outros indicadores Adobe
       for (const indicator of adobeIndicators) {
         if (keyStr.includes(indicator) || valueStr.includes(indicator)) {
           return { detected: true, evidence: `Tag Adobe encontrada em ${key}: ${value}` };
@@ -985,7 +994,7 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
       }
     }
     
-    return { detected: false, evidence: 'Nenhuma tag Adobe detectada' };
+    return { detected: false, evidence: 'Nenhuma tag Adobe/Photoshop detectada' };
   };
 
   const checkSoftwareExplicit = (metadata: FileMetadata) => {
