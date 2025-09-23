@@ -1,4 +1,1 @@
 project_id = "ivjkadbbzjarmoroodxc"
-
-[functions.extract-metadata]
-verify_jwt = false

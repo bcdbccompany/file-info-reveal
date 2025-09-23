@@ -947,10 +947,9 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
   };
 
   const checkAdobeTags = (metadata: FileMetadata) => {
-    // Indicadores reais baseados no ExifTools para arquivos editados no Photoshop
+    // Indicadores específicos de Adobe/Photoshop (removido 'software' genérico)
     const realAdobeIndicators = [
-      'app14flags', 'colortransform', 'app14', 'adobe', 'photoshop',
-      'progressive', 'hewlett-packard', 'hp', 'creator', 'software'
+      'app14flags', 'colortransform', 'app14', 'adobe', 'photoshop'
     ];
     
     for (const [key, value] of Object.entries(metadata)) {
@@ -974,7 +973,12 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
         return { detected: true, evidence: `Progressive DCT detectado em ${key}: ${value}` };
       }
       
-      // 4. Busca por outros indicadores Adobe/Photoshop
+      // 4. Busca específica por Adobe/Photoshop no Software
+      if (keyStr === 'software' && (valueStr.includes('adobe') || valueStr.includes('photoshop'))) {
+        return { detected: true, evidence: `Software Adobe detectado: ${value}` };
+      }
+      
+      // 5. Busca por outros indicadores Adobe específicos (não genéricos)
       for (const indicator of realAdobeIndicators) {
         if (keyStr.includes(indicator) || valueStr.includes(indicator)) {
           return { detected: true, evidence: `Indicador Adobe encontrado em ${key}: ${value}` };
