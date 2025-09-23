@@ -957,7 +957,22 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
   };
 
   const checkAdobeTags = (metadata: FileMetadata) => {
-    // Indicadores específicos de Adobe/Photoshop (removido 'software' genérico)
+    // Whitelist de padrões conhecidos de firmware/sistema que devem ser excluídos
+    const knownFirmwarePatterns = [
+      /^[a-z]\d{3}[a-z]\d{2}[a-z]\d{1}$/i, // Samsung firmware pattern (ex: S916BXXS8DYG6)
+      /^[a-z0-9]{10,15}$/i,                  // Generic firmware patterns
+      /^build\s/i,                           // Build numbers
+      /android/i,                            // Android system
+      /ios/i,                                // iOS system
+      /^[0-9]+\.[0-9]+/                      // Version numbers
+    ];
+
+    // Função para verificar se é firmware conhecido
+    const isFirmware = (value: string) => {
+      return knownFirmwarePatterns.some(pattern => pattern.test(value.trim()));
+    };
+
+    // Indicadores específicos de Adobe/Photoshop
     const realAdobeIndicators = [
       'app14flags', 'colortransform', 'app14', 'adobe', 'photoshop'
     ];
@@ -965,6 +980,11 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
     for (const [key, value] of Object.entries(metadata)) {
       const keyStr = key.toLowerCase();
       const valueStr = String(value).toLowerCase();
+      
+      // Verificar se é firmware conhecido - se for, pular
+      if (isFirmware(String(value))) {
+        continue;
+      }
       
       // 1. Busca por ICC Profile Hewlett-Packard (forte indicador Photoshop)
       if (valueStr.includes('hewlett-packard') || valueStr.includes('hp srgb') || 
@@ -978,12 +998,13 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
         return { detected: true, evidence: `Tag Adobe APP14 encontrada em ${key}: ${value}` };
       }
       
-      // 3. Busca por Progressive DCT (indicador de reprocessamento)
-      if (valueStr.includes('progressive dct') || valueStr.includes('progressive')) {
+      // 3. Busca por Progressive DCT (mais específica - não apenas "progressive")
+      if (valueStr.includes('progressive dct') || 
+          (valueStr.includes('progressive') && (valueStr.includes('huffman') || valueStr.includes('dct')))) {
         return { detected: true, evidence: `Progressive DCT detectado em ${key}: ${value}` };
       }
       
-      // 4. Busca específica por Adobe/Photoshop no Software
+      // 4. Busca específica por Adobe/Photoshop no Software (excluindo firmware)
       if (keyStr === 'software' && (valueStr.includes('adobe') || valueStr.includes('photoshop'))) {
         return { detected: true, evidence: `Software Adobe detectado: ${value}` };
       }
