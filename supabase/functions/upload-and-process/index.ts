@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4'
 import { corsHeaders } from '../_shared/cors.ts'
+import { ExifTool } from 'https://esm.sh/exiftool-vendored@28.7.1'
 import ExifReader from 'https://esm.sh/exifreader@4.32.0'
 
 interface UploadRequest {
@@ -95,56 +96,107 @@ Deno.serve(async (req) => {
     let metadata: MetadataResult = {}
     
     try {
-      console.log('Extracting metadata from file...')
+      console.log('Extracting metadata from file using ExifTool...')
       
-      // Create ArrayBuffer from Uint8Array for ExifReader
-      const arrayBuffer = binaryData.buffer.slice(
-        binaryData.byteOffset, 
-        binaryData.byteOffset + binaryData.byteLength
-      )
+      // Create temporary file for ExifTool processing
+      const tempFilePath = `/tmp/${crypto.randomUUID()}.${extension}`
+      await Deno.writeFile(tempFilePath, binaryData)
       
-      console.log('Created ArrayBuffer with length:', arrayBuffer.byteLength)
+      console.log('Created temporary file:', tempFilePath)
       
-      // Extract EXIF, IPTC, XMP metadata using ExifReader
-      const tags = ExifReader.load(arrayBuffer, {
-        expanded: true,
-        includeUnknown: true
-      })
+      // Initialize ExifTool with CLI arguments: -a -G1 -s -j
+      const exifTool = new ExifTool()
       
-      // Organize metadata properly by categories
-      const organizedMetadata = {
-        exif: {},
-        iptc: {},
-        xmp: {},
-        fileInfo: {
-          size: file.size,
-          type: file.type,
-          name: file.name,
-          lastModified: new Date().toISOString()
-        }
-      }
-
-      // Process tags by type with better categorization
-      for (const [name, tag] of Object.entries(tags)) {
-        const tagValue = tag?.description || tag?.value || tag
+      try {
+        // Extract metadata using ExifTool with specified parameters
+        const exifToolOutput = await exifTool.read(tempFilePath, ['-a', '-G1', '-s', '-j'])
         
-        if (name.toLowerCase().includes('exif') || name.startsWith('0x')) {
-          organizedMetadata.exif[name] = tagValue
-        } else if (name.toLowerCase().includes('iptc') || name.startsWith('iptc:')) {
-          organizedMetadata.iptc[name] = tagValue
-        } else if (name.toLowerCase().includes('xmp') || name.startsWith('xmp:')) {
-          organizedMetadata.xmp[name] = tagValue
-        } else if (['Image Width', 'Image Height', 'DateTime', 'Make', 'Model', 'Orientation'].includes(name)) {
-          organizedMetadata.exif[name] = tagValue
-        } else {
-          organizedMetadata.exif[name] = tagValue // Default to EXIF for unspecified tags
+        console.log('ExifTool extraction completed successfully')
+        
+        // Process ExifTool JSON output
+        const organizedMetadata = {
+          exif: {},
+          iptc: {},
+          xmp: {},
+          fileInfo: {
+            size: file.size,
+            type: file.type,
+            name: file.name,
+            lastModified: new Date().toISOString()
+          }
+        }
+
+        // Process ExifTool structured output by groups
+        for (const [key, value] of Object.entries(exifToolOutput)) {
+          if (key.startsWith('EXIF:') || key.startsWith('IFD0:') || key.startsWith('IFD1:') || key.startsWith('ExifIFD:')) {
+            organizedMetadata.exif[key] = value
+          } else if (key.startsWith('IPTC:')) {
+            organizedMetadata.iptc[key] = value
+          } else if (key.startsWith('XMP:') || key.startsWith('XMP-')) {
+            organizedMetadata.xmp[key] = value
+          } else if (key.startsWith('System:') || key.startsWith('File:')) {
+            organizedMetadata.fileInfo[key] = value
+          } else {
+            // Default to EXIF for ungrouped tags
+            organizedMetadata.exif[key] = value
+          }
+        }
+        
+        metadata = organizedMetadata
+        console.log('ExifTool metadata processed successfully, found', Object.keys(exifToolOutput).length, 'tags')
+        
+      } catch (exifToolError) {
+        console.error('ExifTool extraction failed, falling back to ExifReader:', exifToolError)
+        
+        // Fallback to ExifReader
+        const arrayBuffer = binaryData.buffer.slice(
+          binaryData.byteOffset, 
+          binaryData.byteOffset + binaryData.byteLength
+        )
+        
+        const tags = ExifReader.load(arrayBuffer, {
+          expanded: true,
+          includeUnknown: true
+        })
+        
+        const organizedMetadata = {
+          exif: {},
+          iptc: {},
+          xmp: {},
+          fileInfo: {
+            size: file.size,
+            type: file.type,
+            name: file.name,
+            lastModified: new Date().toISOString()
+          }
+        }
+
+        for (const [name, tag] of Object.entries(tags)) {
+          const tagValue = tag?.description || tag?.value || tag
+          
+          if (name.toLowerCase().includes('exif') || name.startsWith('0x')) {
+            organizedMetadata.exif[name] = tagValue
+          } else if (name.toLowerCase().includes('iptc') || name.startsWith('iptc:')) {
+            organizedMetadata.iptc[name] = tagValue
+          } else if (name.toLowerCase().includes('xmp') || name.startsWith('xmp:')) {
+            organizedMetadata.xmp[name] = tagValue
+          } else {
+            organizedMetadata.exif[name] = tagValue
+          }
+        }
+        
+        metadata = organizedMetadata
+        console.log('ExifReader fallback completed, found', Object.keys(tags).length, 'tags')
+      } finally {
+        // Cleanup temporary file and ExifTool instance
+        try {
+          await Deno.remove(tempFilePath)
+          await exifTool.end()
+        } catch (cleanupError) {
+          console.error('Cleanup error:', cleanupError)
         }
       }
       
-      metadata = organizedMetadata
-      
-      console.log('Metadata extraction completed successfully, found', Object.keys(tags).length, 'tags')
-      console.log('Sample metadata structure:', JSON.stringify(organizedMetadata, null, 2).substring(0, 500) + '...')
     } catch (metadataError) {
       console.error('Metadata extraction error:', metadataError)
       // Continue with empty metadata if extraction fails
