@@ -1,50 +1,101 @@
-import { supabase } from "@/integrations/supabase/client";
-
-interface ExifToolResponse {
-  success: boolean;
-  metadata?: { [key: string]: any };
-  originalFilename?: string;
-  fileSize?: number;
-  mimeType?: string;
-  error?: string;
-}
+import ExifReader from 'exifreader';
 
 export class MetadataService {
-  static async extractMetadataWithExifTool(file: File): Promise<ExifToolResponse> {
+  static async extractMetadata(file: File): Promise<{ [key: string]: any }> {
+    console.log('Extraindo metadados com ExifReader...');
+    
     try {
-      console.log('Tentando usar ExifTool via Edge Function...');
-      const formData = new FormData();
-      formData.append('file', file);
-
-      // Use direct fetch to the Edge Function URL instead of supabase.functions.invoke
-      const response = await fetch('https://ivjkadbbzjarmoroodxc.supabase.co/functions/v1/extract-metadata', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2amthZGJiemphcm1vcm9vZHhjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg2MjgyNTksImV4cCI6MjA3NDIwNDI1OX0.FG8T6wntWfXiEaXjDICtrazTriXwqjOKe7J7iCBXHU8`,
-        },
-        body: formData,
+      const buffer = await file.arrayBuffer();
+      
+      // Usar ExifReader para extrair todos os metadados possíveis
+      const tags = ExifReader.load(buffer, { 
+        expanded: true,
+        includeUnknown: true
       });
-
-      if (!response.ok) {
-        console.log(`Edge Function não disponível (${response.status}), usando fallback JavaScript`);
-        throw new Error(`HTTP error! status: ${response.status}`);
+      
+      const metadata: { [key: string]: any } = {};
+      
+      // Processar todos os tags encontrados
+      if (tags) {
+        // Processar EXIF
+        if (tags.exif) {
+          Object.entries(tags.exif).forEach(([key, value]) => {
+            if (value && typeof value === 'object' && 'description' in value) {
+              metadata[`EXIF:${key}`] = value.description || value.value;
+            }
+          });
+        }
+        
+        // Processar IPTC
+        if (tags.iptc) {
+          Object.entries(tags.iptc).forEach(([key, value]) => {
+            if (value && typeof value === 'object' && 'description' in value) {
+              metadata[`IPTC:${key}`] = value.description || value.value;
+            }
+          });
+        }
+        
+        // Processar XMP
+        if (tags.xmp) {
+          Object.entries(tags.xmp).forEach(([key, value]) => {
+            if (value && typeof value === 'object' && 'description' in value) {
+              metadata[`XMP:${key}`] = value.description || value.value;
+            }
+          });
+        }
+        
+        // Processar File info
+        if (tags.file) {
+          Object.entries(tags.file).forEach(([key, value]) => {
+            if (value && typeof value === 'object' && 'description' in value) {
+              metadata[`File:${key}`] = value.description || value.value;
+            }
+          });
+        }
+        
+        // Processar ICC Profile
+        if (tags.icc) {
+          Object.entries(tags.icc).forEach(([key, value]) => {
+            if (value && typeof value === 'object' && 'description' in value) {
+              metadata[`ICC:${key}`] = value.description || value.value;
+            }
+          });
+        }
       }
-
-      const result = await response.json();
-      console.log('ExifTool funcionou! Metadados extraídos com sucesso.');
-      return result;
-
+      
+      // Adicionar metadados básicos do arquivo sempre
+      metadata['SourceFile'] = file.name;
+      metadata['File:FileSize'] = file.size;
+      metadata['File:FileType'] = file.type || 'Unknown';
+      metadata['File:FileModifyDate'] = new Date(file.lastModified).toISOString();
+      metadata['File:FileName'] = file.name;
+      
+      const extension = file.name.split('.').pop()?.toLowerCase();
+      metadata['File:FileTypeExtension'] = extension || '';
+      
+      // Para imagens, adicionar dimensões se não foram extraídas pelo ExifReader
+      if (file.type.startsWith('image/') && !metadata['EXIF:ImageWidth']) {
+        try {
+          const dimensions = await this.getImageDimensions(file);
+          metadata['EXIF:ImageWidth'] = dimensions.width;
+          metadata['EXIF:ImageHeight'] = dimensions.height;
+          metadata['EXIF:Megapixels'] = ((dimensions.width * dimensions.height) / 1000000).toFixed(2);
+        } catch (error) {
+          console.warn('Could not extract image dimensions:', error);
+        }
+      }
+      
+      console.log('ExifReader extraiu metadados com sucesso!', Object.keys(metadata).length, 'campos encontrados');
+      return metadata;
+      
     } catch (error) {
-      console.log('ExifTool não disponível, usando parser JavaScript como fallback');
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to extract metadata'
-      };
+      console.warn('ExifReader falhou, usando fallback básico:', error);
+      return this.extractBasicMetadata(file);
     }
   }
 
-  // Fallback para parser JavaScript quando ExifTool não estiver disponível
-  static async extractMetadataFallback(file: File): Promise<{ [key: string]: any }> {
+  // Fallback básico se ExifReader falhar
+  private static async extractBasicMetadata(file: File): Promise<{ [key: string]: any }> {
     const metadata: { [key: string]: any } = {};
 
     // Metadados básicos do arquivo
@@ -66,15 +117,6 @@ export class MetadataService {
         metadata['EXIF:Megapixels'] = ((dimensions.width * dimensions.height) / 1000000).toFixed(2);
       } catch (error) {
         console.warn('Could not extract image dimensions:', error);
-      }
-
-      // Tentar extrair EXIF básico
-      try {
-        const buffer = await file.arrayBuffer();
-        const basicExif = await this.extractBasicExif(buffer);
-        Object.assign(metadata, basicExif);
-      } catch (error) {
-        console.warn('Could not extract EXIF data:', error);
       }
     }
 
@@ -105,53 +147,4 @@ export class MetadataService {
     });
   }
 
-  private static async extractBasicExif(buffer: ArrayBuffer): Promise<{ [key: string]: any }> {
-    const exifData: { [key: string]: any } = {};
-    const dataView = new DataView(buffer);
-    
-    try {
-      // Verificar se é JPEG
-      if (dataView.getUint16(0) !== 0xFFD8) {
-        return exifData;
-      }
-
-      // Buscar segmento APP1 (EXIF)
-      let offset = 2;
-      while (offset < dataView.byteLength - 10) {
-        const marker = dataView.getUint16(offset);
-        
-        if (marker === 0xFFE1) { // APP1 segment
-          const segmentLength = dataView.getUint16(offset + 2);
-          const segmentStart = offset + 4;
-          
-          // Verificar cabeçalho EXIF
-          if (segmentStart + 10 < dataView.byteLength &&
-              dataView.getUint32(segmentStart) === 0x45786966 && 
-              dataView.getUint16(segmentStart + 4) === 0x0000) {
-            
-            const tiffStart = segmentStart + 6;
-            if (tiffStart + 8 < dataView.byteLength) {
-              const byteOrder = dataView.getUint16(tiffStart);
-              const littleEndian = byteOrder === 0x4949;
-              
-              exifData['EXIF:ByteOrder'] = littleEndian ? 'Little-endian (Intel)' : 'Big-endian (Motorola)';
-              
-              // Adicionar alguns campos básicos detectados
-              exifData['EXIF:ExifVersion'] = 'Detected via JavaScript';
-            }
-          }
-          break;
-        }
-        
-        const segmentLength = dataView.getUint16(offset + 2);
-        if (segmentLength < 2) break;
-        offset += 2 + segmentLength;
-      }
-      
-    } catch (error) {
-      console.warn('Error in basic EXIF extraction:', error);
-    }
-    
-    return exifData;
-  }
 }

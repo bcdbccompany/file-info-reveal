@@ -499,82 +499,58 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
     const allMetadata: FileMetadata = {};
 
     try {
-      // Primeiro tentar usar ExifTool via Edge Function
-      console.log('Attempting to extract metadata with ExifTool...');
-      const exiftoolResult = await MetadataService.extractMetadataWithExifTool(file);
+      // Usar ExifReader para extração completa de metadados
+      console.log('Extraindo metadados com ExifReader...');
+      const extractedMetadata = await MetadataService.extractMetadata(file);
+      Object.assign(allMetadata, extractedMetadata);
       
-      if (exiftoolResult.success && exiftoolResult.metadata) {
-        console.log('ExifTool extraction successful:', exiftoolResult.metadata);
-        setExiftoolAvailable(true);
-        
-        // Usar metadados do ExifTool diretamente (formato -a -G1 -s)
-        Object.assign(allMetadata, exiftoolResult.metadata);
-        
-        // Adicionar alguns metadados computados
-        allMetadata['Nome do arquivo'] = exiftoolResult.originalFilename || file.name;
-        allMetadata['Tamanho do arquivo'] = exiftoolResult.fileSize || file.size;
-        allMetadata['Tipo MIME original'] = exiftoolResult.mimeType || file.type || 'Não especificado';
-        
-        toast({
-          title: "ExifTool Ativo",
-          description: "Metadados extraídos com ExifTool professional",
-          duration: 3000,
-        });
-        
-      } else {
-        console.log('ExifTool not available, using fallback parser:', exiftoolResult.error);
-        setExiftoolAvailable(false);
-        
-        // Fallback para parser JavaScript
-        const fallbackMetadata = await MetadataService.extractMetadataFallback(file);
-        Object.assign(allMetadata, fallbackMetadata);
-        
-        // Análises adicionais com JavaScript
-        const buffer = await file.arrayBuffer();
-        const uint8Array = new Uint8Array(buffer);
-        
-        // Hashes criptográficos
-        allMetadata['Hash SHA-256'] = await generateHash(buffer, 'SHA-256');
-        allMetadata['Hash SHA-1'] = await generateHash(buffer, 'SHA-1');
-        
-        // Análise de entropy
-        const entropy = calculateEntropy(uint8Array);
-        allMetadata['Entropia (bits)'] = entropy.toFixed(4);
-        allMetadata['Compressibilidade estimada'] = entropy > 7 ? 'Baixa' : entropy > 5 ? 'Média' : 'Alta';
+      setExiftoolAvailable(true); // ExifReader sempre disponível
+      
+      toast({
+        title: "ExifReader Ativo",
+        description: "Metadados extraídos com ExifReader",
+        duration: 3000,
+      });
+      
+      // Análises adicionais com JavaScript
+      const buffer = await file.arrayBuffer();
+      const uint8Array = new Uint8Array(buffer);
+      
+      // Hashes criptográficos
+      allMetadata['Hash SHA-256'] = await generateHash(buffer, 'SHA-256');
+      allMetadata['Hash SHA-1'] = await generateHash(buffer, 'SHA-1');
+      
+      // Análise de entropy
+      const entropy = calculateEntropy(uint8Array);
+      allMetadata['Entropia (bits)'] = entropy.toFixed(4);
+      allMetadata['Compressibilidade estimada'] = entropy > 7 ? 'Baixa' : entropy > 5 ? 'Média' : 'Alta';
 
-        // Análise de bytes
-        allMetadata['Primeiro byte (hex)'] = uint8Array[0]?.toString(16).padStart(2, '0').toUpperCase() || '00';
-        allMetadata['Último byte (hex)'] = uint8Array[uint8Array.length - 1]?.toString(16).padStart(2, '0').toUpperCase() || '00';
-        allMetadata['Bytes nulos'] = uint8Array.filter(b => b === 0).length;
-        allMetadata['Bytes únicos'] = new Set(uint8Array).size;
+      // Análise de bytes
+      allMetadata['Primeiro byte (hex)'] = uint8Array[0]?.toString(16).padStart(2, '0').toUpperCase() || '00';
+      allMetadata['Último byte (hex)'] = uint8Array[uint8Array.length - 1]?.toString(16).padStart(2, '0').toUpperCase() || '00';
+      allMetadata['Bytes nulos'] = uint8Array.filter(b => b === 0).length;
+      allMetadata['Bytes únicos'] = new Set(uint8Array).size;
 
-        // Para imagens, extrair EXIF com parser JavaScript
-        if (file.type.startsWith('image/')) {
-          const exifData = await extractExifData(buffer);
-          Object.assign(allMetadata, exifData);
-          
-          const colorProfile = analyzeColorProfile(buffer);
-          Object.assign(allMetadata, colorProfile);
+      // Para imagens, extrair EXIF com parser JavaScript
+      if (file.type.startsWith('image/')) {
+        const exifData = await extractExifData(buffer);
+        Object.assign(allMetadata, exifData);
+        
+        const colorProfile = analyzeColorProfile(buffer);
+        Object.assign(allMetadata, colorProfile);
+      }
+
+      // Análise específica para diferentes tipos
+      if (file.type.startsWith('text/') || file.name.endsWith('.txt') || file.name.endsWith('.csv')) {
+        try {
+          const text = await file.text();
+          allMetadata['Linhas de texto'] = text.split('\n').length;
+          allMetadata['Caracteres'] = text.length;
+          allMetadata['Palavras estimadas'] = text.split(/\s+/).filter(w => w.length > 0).length;
+          allMetadata['Encoding detectado'] = detectTextEncoding(uint8Array);
+        } catch (error) {
+          allMetadata['Erro análise texto'] = 'Não foi possível analisar';
         }
-
-        // Análise específica para diferentes tipos
-        if (file.type.startsWith('text/') || file.name.endsWith('.txt') || file.name.endsWith('.csv')) {
-          try {
-            const text = await file.text();
-            allMetadata['Linhas de texto'] = text.split('\n').length;
-            allMetadata['Caracteres'] = text.length;
-            allMetadata['Palavras estimadas'] = text.split(/\s+/).filter(w => w.length > 0).length;
-            allMetadata['Encoding detectado'] = detectTextEncoding(uint8Array);
-          } catch (error) {
-            allMetadata['Erro análise texto'] = 'Não foi possível analisar';
-          }
-        }
-
-        toast({
-          title: "Parser JavaScript",
-          description: "ExifTool não disponível, usando parser JavaScript",
-          duration: 3000,
-        });
       }
 
       // WebkitRelativePath
