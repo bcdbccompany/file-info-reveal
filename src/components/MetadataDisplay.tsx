@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { FileText, Calendar, HardDrive, Hash, Image, MapPin, Camera, Palette, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { MetadataService } from '@/services/MetadataService';
@@ -1262,171 +1263,194 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
         </p>
       </CardHeader>
       <CardContent>
-        <div className="grid gap-3">
-          {metadataEntries.map(([key, value], index) => (
-            <div
-              key={index}
-              className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/50 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                {getIconForKey(key) && (
-                  <div className="text-primary">
-                    {getIconForKey(key)}
+        <Accordion type="multiple" defaultValue={["metadata", "analysis"]} className="w-full">
+          {/* Seção de Metadados */}
+          <AccordionItem value="metadata">
+            <AccordionTrigger className="text-lg font-semibold">
+              📄 Metadados Extraídos ({metadataEntries.length} campos)
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="grid gap-3 mt-4">
+                {metadataEntries.map(([key, value], index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      {getIconForKey(key) && (
+                        <div className="text-primary">
+                          {getIconForKey(key)}
+                        </div>
+                      )}
+                      <span className="font-medium text-foreground">{key}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {key === 'Categoria' ? (
+                        <Badge variant="secondary" className="text-xs">
+                          {formatValue(value)}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground font-mono text-sm max-w-xs text-right truncate">
+                          {formatValue(value)}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                )}
-                <span className="font-medium text-foreground">{key}</span>
+                ))}
               </div>
-              <div className="flex items-center gap-2">
-                {key === 'Categoria' ? (
-                  <Badge variant="secondary" className="text-xs">
-                    {formatValue(value)}
-                  </Badge>
-                ) : (
-                  <span className="text-muted-foreground font-mono text-sm max-w-xs text-right truncate">
-                    {formatValue(value)}
-                  </span>
-                )}
+              
+              <div className="mt-6 p-4 bg-muted/30 rounded-lg border border-border">
+                <p className="text-sm text-muted-foreground text-center">
+                  Total de metadados encontrados: <span className="font-semibold text-foreground">{metadataEntries.length}</span>
+                </p>
               </div>
-            </div>
-          ))}
-        </div>
-        
-        <div className="mt-6 p-4 bg-muted/30 rounded-lg border border-border">
-          <p className="text-sm text-muted-foreground text-center">
-            Total de metadados encontrados: <span className="font-semibold text-foreground">{metadataEntries.length}</span>
-          </p>
-        </div>
+            </AccordionContent>
+          </AccordionItem>
 
-        {/* Seção de Pontuação de Alteração */}
-        {scoreResult && (
-          <div className="mt-6 p-6 bg-gradient-to-br from-primary/5 to-secondary/5 rounded-lg border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold text-foreground flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-primary" />
-                Análise de Alteração - Matriz de Validação
-              </h3>
-              <div className="flex items-center gap-3">
-                <Badge variant="outline" className="text-xs">
-                  {scoreResult.confidenceLevel} Confiança
-                </Badge>
+          {/* Seção de Análise de Alteração */}
+          {scoreResult && (
+            <AccordionItem value="analysis">
+              <AccordionTrigger className="text-lg font-semibold">
+                🔍 Análise de Alteração - Matriz de Validação 
                 <Badge 
                   variant={
                     scoreResult.riskLevel === 'Muito Alto' ? 'destructive' : 
                     scoreResult.riskLevel === 'Alto' ? 'destructive' :
                     scoreResult.riskLevel === 'Moderado' ? 'secondary' : 'outline'
                   }
-                  className="text-sm font-semibold"
+                  className="ml-2"
                 >
-                  {scoreResult.classification}
+                  {scoreResult.adjustedScore} pts - {scoreResult.riskLevel}
                 </Badge>
-                <span className="text-2xl font-bold text-primary">
-                  {scoreResult.adjustedScore} pts
-                </span>
-              </div>
-            </div>
-
-            {scoreResult.isDigitalTransport && (
-              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
-                <p className="text-sm text-blue-800 dark:text-blue-200">
-                  <strong>Transporte Digital Detectado:</strong> Padrão compatível com compressão por WhatsApp, Telegram ou similar. 
-                  Pontuação limitada a máximo 7 pontos.
-                </p>
-              </div>
-            )}
-            
-            <div className="mb-6">
-              <h4 className="font-semibold text-foreground mb-3">Detalhamento por Categoria:</h4>
-              <div className="grid gap-3">
-                {scoreResult.rules.map((rule, index) => (
-                  <div
-                    key={index}
-                    className={`flex items-center justify-between p-4 rounded-lg border transition-colors ${
-                      rule.detected 
-                        ? 'bg-destructive/10 border-destructive/20' 
-                        : 'bg-muted/30 border-border'
-                    }`}
-                  >
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="mt-4 p-6 bg-gradient-to-br from-primary/5 to-secondary/5 rounded-lg border border-border">
+                  <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
-                      {rule.detected ? (
-                        <AlertTriangle className="h-4 w-4 text-destructive flex-shrink-0" />
-                      ) : (
-                        <CheckCircle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                      )}
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-foreground">{rule.category}</span>
-                          <Badge variant="outline" className="text-xs">
-                            {rule.weight}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-muted-foreground">{rule.description}</p>
-                        <p className="text-xs text-muted-foreground mt-1 italic">
-                          {rule.evidence}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge 
-                        variant={rule.detected ? 'destructive' : 'outline'}
-                        className="text-xs"
-                      >
-                        {rule.detected ? `+${rule.points}` : '0'} pts
+                      <Badge variant="outline" className="text-xs">
+                        {scoreResult.confidenceLevel} Confiança
                       </Badge>
+                      <Badge 
+                        variant={
+                          scoreResult.riskLevel === 'Muito Alto' ? 'destructive' : 
+                          scoreResult.riskLevel === 'Alto' ? 'destructive' :
+                          scoreResult.riskLevel === 'Moderado' ? 'secondary' : 'outline'
+                        }
+                        className="text-sm font-semibold"
+                      >
+                        {scoreResult.classification}
+                      </Badge>
+                    </div>
+                    <span className="text-2xl font-bold text-primary">
+                      {scoreResult.adjustedScore} pts
+                    </span>
+                  </div>
+
+                  {scoreResult.isDigitalTransport && (
+                    <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+                      <p className="text-sm text-blue-800 dark:text-blue-200">
+                        <strong>Transporte Digital Detectado:</strong> Padrão compatível com compressão por WhatsApp, Telegram ou similar. 
+                        Pontuação limitada a máximo 7 pontos.
+                      </p>
+                    </div>
+                  )}
+                  
+                  <div className="mb-6">
+                    <h4 className="font-semibold text-foreground mb-3">Detalhamento por Categoria:</h4>
+                    <div className="grid gap-3">
+                      {scoreResult.rules.map((rule, index) => (
+                        <div
+                          key={index}
+                          className={`flex items-center justify-between p-4 rounded-lg border transition-colors ${
+                            rule.detected 
+                              ? 'bg-destructive/10 border-destructive/20' 
+                              : 'bg-muted/30 border-border'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            {rule.detected ? (
+                              <AlertTriangle className="h-4 w-4 text-destructive flex-shrink-0" />
+                            ) : (
+                              <CheckCircle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            )}
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-foreground">{rule.category}</span>
+                                <Badge variant="outline" className="text-xs">
+                                  {rule.weight}
+                                </Badge>
+                              </div>
+                              <p className="text-sm text-muted-foreground">{rule.description}</p>
+                              <p className="text-xs text-muted-foreground mt-1 italic">
+                                {rule.evidence}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge 
+                              variant={rule.detected ? 'destructive' : 'outline'}
+                              className="text-xs"
+                            >
+                              {rule.detected ? `+${rule.points}` : '0'} pts
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
 
-            {scoreResult.bonuses.length > 0 && (
-              <div className="mb-6">
-                <h4 className="font-semibold text-foreground mb-3">Bônus de Co-ocorrência:</h4>
-                <div className="grid gap-2">
-                  {scoreResult.bonuses.map((bonus, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-lg"
-                    >
-                      <div>
-                        <span className="font-medium text-orange-800 dark:text-orange-200">{bonus.combination}</span>
-                        <p className="text-sm text-orange-700 dark:text-orange-300">{bonus.description}</p>
+                  {scoreResult.bonuses.length > 0 && (
+                    <div className="mb-6">
+                      <h4 className="font-semibold text-foreground mb-3">Bônus de Co-ocorrência:</h4>
+                      <div className="grid gap-2">
+                        {scoreResult.bonuses.map((bonus, index) => (
+                          <div
+                            key={index}
+                            className="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-lg"
+                          >
+                            <div>
+                              <span className="font-medium text-orange-800 dark:text-orange-200">{bonus.combination}</span>
+                              <p className="text-sm text-orange-700 dark:text-orange-300">{bonus.description}</p>
+                            </div>
+                            <Badge variant="outline" className="text-xs">
+                              +{bonus.points} pts
+                            </Badge>
+                          </div>
+                        ))}
                       </div>
-                      <Badge variant="outline" className="text-xs">
-                        +{bonus.points} pts
+                    </div>
+                  )}
+                  
+                  <div className="p-4 bg-muted/20 rounded-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-semibold text-foreground">
+                        Pontuação: {scoreResult.totalScore} pts 
+                        {scoreResult.adjustedScore !== scoreResult.totalScore && (
+                          <span className="text-muted-foreground">
+                            → {scoreResult.adjustedScore} pts (ajustado)
+                          </span>
+                        )}
+                      </span>
+                      <Badge 
+                        variant={scoreResult.riskLevel === 'Muito Alto' ? 'destructive' : 
+                                scoreResult.riskLevel === 'Alto' ? 'destructive' :
+                                scoreResult.riskLevel === 'Moderado' ? 'secondary' : 'outline'}
+                      >
+                        {scoreResult.riskLevel}
                       </Badge>
                     </div>
-                  ))}
+                    <p className="text-sm text-muted-foreground">
+                      {scoreResult.explanation}
+                    </p>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      <strong>Escala:</strong> 0-3 (Baixo) | 4-7 (Moderado) | 8-12 (Alto) | 13+ (Muito Alto)
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
-            
-            <div className="p-4 bg-muted/20 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-semibold text-foreground">
-                  Pontuação: {scoreResult.totalScore} pts 
-                  {scoreResult.adjustedScore !== scoreResult.totalScore && (
-                    <span className="text-muted-foreground">
-                      → {scoreResult.adjustedScore} pts (ajustado)
-                    </span>
-                  )}
-                </span>
-                <Badge 
-                  variant={scoreResult.riskLevel === 'Muito Alto' ? 'destructive' : 
-                          scoreResult.riskLevel === 'Alto' ? 'destructive' :
-                          scoreResult.riskLevel === 'Moderado' ? 'secondary' : 'outline'}
-                >
-                  {scoreResult.riskLevel}
-                </Badge>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {scoreResult.explanation}
-              </p>
-              <div className="mt-2 text-xs text-muted-foreground">
-                <strong>Escala:</strong> 0-3 (Baixo) | 4-7 (Moderado) | 8-12 (Alto) | 13+ (Muito Alto)
-              </div>
-            </div>
-          </div>
-        )}
+              </AccordionContent>
+            </AccordionItem>
+          )}
+        </Accordion>
       </CardContent>
     </Card>
   );
