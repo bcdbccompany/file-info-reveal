@@ -1,3 +1,5 @@
+import { supabase } from "@/integrations/supabase/client";
+
 interface ExifToolResponse {
   success: boolean;
   metadata?: { [key: string]: any };
@@ -8,27 +10,20 @@ interface ExifToolResponse {
 }
 
 export class MetadataService {
-  private static SUPABASE_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/extract-metadata`;
-
   static async extractMetadataWithExifTool(file: File): Promise<ExifToolResponse> {
     try {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(this.SUPABASE_FUNCTION_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
+      const { data, error } = await supabase.functions.invoke('extract-metadata', {
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (error) {
+        throw new Error(`Supabase function error: ${error.message}`);
       }
 
-      const result = await response.json();
-      return result;
+      return data as ExifToolResponse;
 
     } catch (error) {
       console.error('Error calling ExifTool API:', error);
