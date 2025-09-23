@@ -15,15 +15,21 @@ export class MetadataService {
       const formData = new FormData();
       formData.append('file', file);
 
-      const { data, error } = await supabase.functions.invoke('extract-metadata', {
+      // Use direct fetch to the Edge Function URL instead of supabase.functions.invoke
+      const response = await fetch('https://ivjkadbbzjarmoroodxc.supabase.co/functions/v1/extract-metadata', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2amthZGJiemphcm1vcm9vZHhjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg2MjgyNTksImV4cCI6MjA3NDIwNDI1OX0.FG8T6wntWfXiEaXjDICtrazTriXwqjOKe7J7iCBXHU8`,
+        },
         body: formData,
       });
 
-      if (error) {
-        throw new Error(`Supabase function error: ${error.message}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      return data as ExifToolResponse;
+      const result = await response.json();
+      return result;
 
     } catch (error) {
       console.error('Error calling ExifTool API:', error);
