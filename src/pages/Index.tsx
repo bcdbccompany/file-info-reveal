@@ -5,9 +5,13 @@ import { MetadataDisplay } from '@/components/MetadataDisplay';
 
 export default function Index() {
   const [metadata, setMetadata] = useState<any>({});
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
 
-  const handleMetadataExtracted = (metadata: any) => {
-    setMetadata(metadata);
+  const handleMetadataExtracted = (data: any) => {
+    setMetadata(data.metadata || data);
+    if (data.file) {
+      setUploadedFile(data.file);
+    }
   };
 
   return (
@@ -37,7 +41,7 @@ export default function Index() {
 
           {/* Results */}
           {Object.keys(metadata).length > 0 && (
-            <MetadataDisplay metadata={metadata} />
+            <MetadataDisplay file={uploadedFile} metadata={metadata} />
           )}
         </div>
       </div>

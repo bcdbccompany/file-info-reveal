@@ -6,7 +6,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useSupabaseUpload, UploadProgress } from '@/hooks/useSupabaseUpload';
 
 interface SupabaseUploadZoneProps {
-  onMetadataExtracted: (metadata: any) => void;
+  onMetadataExtracted: (data: { metadata: any; file?: File }) => void;
 }
 
 export function SupabaseUploadZone({ onMetadataExtracted }: SupabaseUploadZoneProps) {
@@ -50,7 +50,10 @@ export function SupabaseUploadZone({ onMetadataExtracted }: SupabaseUploadZonePr
       const uploadResult = await uploadFile(file);
       
       if (uploadResult.metadata) {
-        onMetadataExtracted(uploadResult.metadata);
+        onMetadataExtracted({
+          metadata: uploadResult.metadata,
+          file: file
+        });
       }
 
     } catch (error) {
@@ -78,7 +81,7 @@ export function SupabaseUploadZone({ onMetadataExtracted }: SupabaseUploadZonePr
 
   const handleRemove = () => {
     clearProgress();
-    onMetadataExtracted({});
+    onMetadataExtracted({ metadata: {} });
   };
 
   const getStatusIcon = (status?: string) => {
