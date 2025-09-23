@@ -12,6 +12,7 @@ interface ExifToolResponse {
 export class MetadataService {
   static async extractMetadataWithExifTool(file: File): Promise<ExifToolResponse> {
     try {
+      console.log('Tentando usar ExifTool via Edge Function...');
       const formData = new FormData();
       formData.append('file', file);
 
@@ -25,14 +26,16 @@ export class MetadataService {
       });
 
       if (!response.ok) {
+        console.log(`Edge Function não disponível (${response.status}), usando fallback JavaScript`);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const result = await response.json();
+      console.log('ExifTool funcionou! Metadados extraídos com sucesso.');
       return result;
 
     } catch (error) {
-      console.error('Error calling ExifTool API:', error);
+      console.log('ExifTool não disponível, usando parser JavaScript como fallback');
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to extract metadata'
