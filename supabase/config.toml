@@ -1,4 +1,1 @@
 project_id = "ivjkadbbzjarmoroodxc"
-
-[functions.upload-and-process]
-verify_jwt = false
