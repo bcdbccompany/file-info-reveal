@@ -26,8 +26,9 @@ serve(async (req) => {
     // Convert file to bytes for processing
     const bytes = new Uint8Array(await file.arrayBuffer())
     
-    // Create temporary file
-    const tempFile = await Deno.makeTempFile({ suffix: `.${file.name.split('.').pop()}` })
+    // Create temporary file in /tmp directory (Deno.makeTempFile is blocklisted)
+    const extension = file.name.split('.').pop() || 'tmp'
+    const tempFile = `/tmp/metadata_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${extension}`
     await Deno.writeFile(tempFile, bytes)
 
     try {
