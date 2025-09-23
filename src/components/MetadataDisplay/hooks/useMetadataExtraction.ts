@@ -63,7 +63,7 @@ export function useMetadataExtraction(file?: File, initialMetadata?: FileMetadat
       fileType: file?.type || 'unknown',
       lastModified: file ? new Date(file.lastModified).toISOString() : new Date().toISOString(),
       extractionTimestamp: new Date().toISOString(),
-      exifReaderAvailable: exiftoolAvailable,
+      extractionSource: exiftoolAvailable ? 'API (Edge Function)' : 'Local (Browser)',
       metadata: metadata,
       alterationAnalysis: scoreResult
     };
@@ -91,11 +91,19 @@ export function useMetadataExtraction(file?: File, initialMetadata?: FileMetadat
 
   useEffect(() => {
     if (initialMetadata && Object.keys(initialMetadata).length > 0) {
+      console.log('Using API-provided metadata:', initialMetadata);
       setMetadata(initialMetadata);
+      setExiftoolAvailable(true); // API successfully provided metadata
       setIsLoading(false);
-      const result = calculateAlterationScore(initialMetadata);
-      setScoreResult(result);
+      
+      // Calculate alteration score with API metadata
+      if (file) {
+        const score = calculateAlterationScore(initialMetadata);
+        setScoreResult(score);
+      }
     } else if (file) {
+      console.log('API metadata not available, falling back to local extraction');
+      setExiftoolAvailable(false);
       extractAllMetadata();
     }
   }, [file, initialMetadata, extractAllMetadata]);

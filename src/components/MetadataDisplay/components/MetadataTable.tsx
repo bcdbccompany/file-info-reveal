@@ -8,12 +8,14 @@ interface MetadataTableProps {
 }
 
 export function MetadataTable({ metadata }: MetadataTableProps) {
-  // Categorizar metadados
+  // Flatten and categorize metadata from API structure
   const categorizeMetadata = () => {
     const categories: { [key: string]: { [key: string]: any } } = {
       'Arquivo': {},
       'Imagem': {},
       'EXIF': {},
+      'IPTC': {},
+      'XMP': {},
       'Câmera': {},
       'Localização': {},
       'Software': {},
@@ -21,35 +23,77 @@ export function MetadataTable({ metadata }: MetadataTableProps) {
       'Outros': {}
     };
 
-    Object.entries(metadata).forEach(([key, value]) => {
-      const lowerKey = key.toLowerCase();
-      
-      if (lowerKey.includes('size') || lowerKey.includes('type') || lowerKey.includes('format') || 
-          lowerKey.includes('encoding') || lowerKey.includes('entropy') || lowerKey.includes('hash')) {
-        categories['Arquivo'][key] = value;
-      } else if (lowerKey.includes('width') || lowerKey.includes('height') || lowerKey.includes('dimensions') || 
-                 lowerKey.includes('resolution') || lowerKey.includes('dpi') || lowerKey.includes('color')) {
-        categories['Imagem'][key] = value;
-      } else if (lowerKey.includes('exif') || lowerKey.includes('orientation') || lowerKey.includes('compression')) {
-        categories['EXIF'][key] = value;
-      } else if (lowerKey.includes('make') || lowerKey.includes('model') || lowerKey.includes('lens') || 
-                 lowerKey.includes('focal') || lowerKey.includes('aperture') || lowerKey.includes('exposure') || 
-                 lowerKey.includes('iso') || lowerKey.includes('flash') || lowerKey.includes('metering')) {
-        categories['Câmera'][key] = value;
-      } else if (lowerKey.includes('gps') || lowerKey.includes('location') || lowerKey.includes('coordinates')) {
-        categories['Localização'][key] = value;
-      } else if (lowerKey.includes('software') || lowerKey.includes('application') || lowerKey.includes('creator') || 
-                 lowerKey.includes('editor') || lowerKey.includes('processed')) {
-        categories['Software'][key] = value;
-      } else if (lowerKey.includes('signature') || lowerKey.includes('certificate') || lowerKey.includes('manifest') || 
-                 lowerKey.includes('c2pa') || lowerKey.includes('authenticity')) {
-        categories['Segurança'][key] = value;
-      } else {
-        categories['Outros'][key] = value;
+    // If metadata has API structure (exif, iptc, xmp, fileInfo), process it
+    if (metadata.exif || metadata.iptc || metadata.xmp || metadata.fileInfo) {
+      // Process fileInfo
+      if (metadata.fileInfo) {
+        Object.entries(metadata.fileInfo).forEach(([key, value]) => {
+          categories['Arquivo'][key] = value;
+        });
       }
-    });
 
-    // Remover categorias vazias
+      // Process EXIF data
+      if (metadata.exif && Object.keys(metadata.exif).length > 0) {
+        Object.entries(metadata.exif).forEach(([key, value]) => {
+          const lowerKey = key.toLowerCase();
+          if (lowerKey.includes('make') || lowerKey.includes('model') || lowerKey.includes('lens') || 
+              lowerKey.includes('focal') || lowerKey.includes('aperture') || lowerKey.includes('exposure') || 
+              lowerKey.includes('iso') || lowerKey.includes('flash') || lowerKey.includes('metering')) {
+            categories['Câmera'][key] = value;
+          } else if (lowerKey.includes('width') || lowerKey.includes('height') || 
+                     lowerKey.includes('resolution') || lowerKey.includes('dpi') || lowerKey.includes('color')) {
+            categories['Imagem'][key] = value;
+          } else {
+            categories['EXIF'][key] = value;
+          }
+        });
+      }
+
+      // Process IPTC data
+      if (metadata.iptc && Object.keys(metadata.iptc).length > 0) {
+        Object.entries(metadata.iptc).forEach(([key, value]) => {
+          categories['IPTC'][key] = value;
+        });
+      }
+
+      // Process XMP data
+      if (metadata.xmp && Object.keys(metadata.xmp).length > 0) {
+        Object.entries(metadata.xmp).forEach(([key, value]) => {
+          categories['XMP'][key] = value;
+        });
+      }
+    } else {
+      // Fallback: process flat metadata structure (legacy format)
+      Object.entries(metadata).forEach(([key, value]) => {
+        const lowerKey = key.toLowerCase();
+        
+        if (lowerKey.includes('size') || lowerKey.includes('type') || lowerKey.includes('format') || 
+            lowerKey.includes('encoding') || lowerKey.includes('entropy') || lowerKey.includes('hash')) {
+          categories['Arquivo'][key] = value;
+        } else if (lowerKey.includes('width') || lowerKey.includes('height') || lowerKey.includes('dimensions') || 
+                   lowerKey.includes('resolution') || lowerKey.includes('dpi') || lowerKey.includes('color')) {
+          categories['Imagem'][key] = value;
+        } else if (lowerKey.includes('exif') || lowerKey.includes('orientation') || lowerKey.includes('compression')) {
+          categories['EXIF'][key] = value;
+        } else if (lowerKey.includes('make') || lowerKey.includes('model') || lowerKey.includes('lens') || 
+                   lowerKey.includes('focal') || lowerKey.includes('aperture') || lowerKey.includes('exposure') || 
+                   lowerKey.includes('iso') || lowerKey.includes('flash') || lowerKey.includes('metering')) {
+          categories['Câmera'][key] = value;
+        } else if (lowerKey.includes('gps') || lowerKey.includes('location') || lowerKey.includes('coordinates')) {
+          categories['Localização'][key] = value;
+        } else if (lowerKey.includes('software') || lowerKey.includes('application') || lowerKey.includes('creator') || 
+                   lowerKey.includes('editor') || lowerKey.includes('processed')) {
+          categories['Software'][key] = value;
+        } else if (lowerKey.includes('signature') || lowerKey.includes('certificate') || lowerKey.includes('manifest') || 
+                   lowerKey.includes('c2pa') || lowerKey.includes('authenticity')) {
+          categories['Segurança'][key] = value;
+        } else {
+          categories['Outros'][key] = value;
+        }
+      });
+    }
+
+    // Remove empty categories
     return Object.fromEntries(
       Object.entries(categories).filter(([, items]) => Object.keys(items).length > 0)
     );

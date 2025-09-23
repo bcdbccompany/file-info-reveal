@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
     const fileName = `${timestamp}_${crypto.randomUUID()}.${extension}`
     const filePath = `public/${fileName}`
 
-    // Convert base64 to Uint8Array
+    // Convert base64 to Uint8Array for storage
     const base64Data = file.data.split(',')[1] || file.data
     const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0))
 
@@ -91,16 +91,28 @@ Deno.serve(async (req) => {
 
     console.log('File uploaded successfully:', uploadData.path)
 
-    // Extract metadata directly from the uploaded file
+    // Extract metadata from the binary data
     let metadata: MetadataResult = {}
     
     try {
       console.log('Extracting metadata from file...')
       
-      // Extract EXIF, IPTC, XMP metadata using ExifReader
-      const tags = ExifReader.load(binaryData)
+      // Create ArrayBuffer from Uint8Array for ExifReader
+      const arrayBuffer = binaryData.buffer.slice(
+        binaryData.byteOffset, 
+        binaryData.byteOffset + binaryData.byteLength
+      )
       
-      metadata = {
+      console.log('Created ArrayBuffer with length:', arrayBuffer.byteLength)
+      
+      // Extract EXIF, IPTC, XMP metadata using ExifReader
+      const tags = ExifReader.load(arrayBuffer, {
+        expanded: true,
+        includeUnknown: true
+      })
+      
+      // Organize metadata properly by categories
+      const organizedMetadata = {
         exif: {},
         iptc: {},
         xmp: {},
@@ -112,20 +124,27 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Process tags by type
+      // Process tags by type with better categorization
       for (const [name, tag] of Object.entries(tags)) {
-        if (name.startsWith('exif:') || name.startsWith('EXIF ')) {
-          metadata.exif[name] = tag
-        } else if (name.startsWith('iptc:') || name.startsWith('IPTC ')) {
-          metadata.iptc[name] = tag
-        } else if (name.startsWith('xmp:') || name.startsWith('XMP ')) {
-          metadata.xmp[name] = tag
+        const tagValue = tag?.description || tag?.value || tag
+        
+        if (name.toLowerCase().includes('exif') || name.startsWith('0x')) {
+          organizedMetadata.exif[name] = tagValue
+        } else if (name.toLowerCase().includes('iptc') || name.startsWith('iptc:')) {
+          organizedMetadata.iptc[name] = tagValue
+        } else if (name.toLowerCase().includes('xmp') || name.startsWith('xmp:')) {
+          organizedMetadata.xmp[name] = tagValue
+        } else if (['Image Width', 'Image Height', 'DateTime', 'Make', 'Model', 'Orientation'].includes(name)) {
+          organizedMetadata.exif[name] = tagValue
         } else {
-          metadata.exif[name] = tag // Default to EXIF for unspecified tags
+          organizedMetadata.exif[name] = tagValue // Default to EXIF for unspecified tags
         }
       }
       
-      console.log('Metadata extraction completed successfully')
+      metadata = organizedMetadata
+      
+      console.log('Metadata extraction completed successfully, found', Object.keys(tags).length, 'tags')
+      console.log('Sample metadata structure:', JSON.stringify(organizedMetadata, null, 2).substring(0, 500) + '...')
     } catch (metadataError) {
       console.error('Metadata extraction error:', metadataError)
       // Continue with empty metadata if extraction fails

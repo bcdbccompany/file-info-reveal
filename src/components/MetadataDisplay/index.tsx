@@ -43,14 +43,15 @@ export function MetadataDisplay({ file, metadata: initialMetadata }: MetadataDis
         <CardTitle className="text-2xl font-bold text-foreground flex items-center gap-2">
           <FileText className="h-6 w-6 text-primary" />
           Metadados do Arquivo
-          {exiftoolAvailable && (
-            <Badge variant="outline" className="text-xs ml-2">
-              ExifReader Ativo
-            </Badge>
-          )}
+          <Badge variant={exiftoolAvailable ? "default" : "secondary"} className="text-xs ml-2">
+            {exiftoolAvailable ? "API (Edge Function)" : "Local (Browser)"}
+          </Badge>
         </CardTitle>
         <p className="text-muted-foreground">
-          Metadados extraídos com ExifReader - Biblioteca JavaScript completa para análise de arquivos
+          {exiftoolAvailable 
+            ? "Metadados extraídos via API usando ExifReader no servidor" 
+            : "Metadados extraídos localmente usando ExifReader no navegador"
+          }
         </p>
         <div className="mt-4">
           <Button 
