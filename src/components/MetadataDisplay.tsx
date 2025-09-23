@@ -1,7 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { FileText, Calendar, HardDrive, Hash, Image, MapPin, Camera, Palette, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
+import { FileText, Calendar, HardDrive, Hash, Image, MapPin, Camera, Palette, Zap, AlertTriangle, CheckCircle, Download } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { MetadataService } from '@/services/MetadataService';
 import { useToast } from '@/components/ui/use-toast';
@@ -79,6 +80,38 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
     const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const downloadMetadataAsJson = () => {
+    const jsonData = {
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+      lastModified: new Date(file.lastModified).toISOString(),
+      extractionTimestamp: new Date().toISOString(),
+      exifReaderAvailable: exiftoolAvailable,
+      metadata: metadata,
+      alterationAnalysis: scoreResult
+    };
+
+    const blob = new Blob([JSON.stringify(jsonData, null, 2)], { 
+      type: 'application/json' 
+    });
+    
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `metadata_${file.name.replace(/\.[^/.]+$/, '')}_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast({
+      title: "Download Concluído",
+      description: "Arquivo JSON com metadados baixado com sucesso",
+      duration: 3000,
+    });
   };
 
   const generateHash = async (buffer: ArrayBuffer, algorithm: string = 'SHA-256'): Promise<string> => {
@@ -1227,16 +1260,26 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
           Metadados do Arquivo
           {exiftoolAvailable && (
             <Badge variant="outline" className="text-xs ml-2">
-              ExifTool Professional
+              ExifReader Ativo
             </Badge>
           )}
         </CardTitle>
         <p className="text-muted-foreground">
           {exiftoolAvailable 
-            ? "Metadados extraídos com ExifTool (-a -G1 -s) - Análise forense profissional"
+            ? "Metadados extraídos com ExifReader - Análise completa"
             : "Informações detalhadas extraídas com parser JavaScript"
           }
         </p>
+        <div className="mt-4">
+          <Button 
+            onClick={downloadMetadataAsJson}
+            className="flex items-center gap-2"
+            variant="outline"
+          >
+            <Download className="h-4 w-4" />
+            Baixar JSON
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <Accordion type="multiple" defaultValue={["metadata", "analysis"]} className="w-full">
