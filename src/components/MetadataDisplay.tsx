@@ -41,19 +41,27 @@ interface ScoreResult {
 }
 
 interface MetadataDisplayProps {
-  file: File;
+  file?: File;
+  metadata?: FileMetadata;
 }
 
-export default function MetadataDisplay({ file }: MetadataDisplayProps) {
-  const [metadata, setMetadata] = useState<FileMetadata>({});
-  const [isLoading, setIsLoading] = useState(true);
+export default function MetadataDisplay({ file, metadata: initialMetadata }: MetadataDisplayProps) {
+  const [metadata, setMetadata] = useState<FileMetadata>(initialMetadata || {});
+  const [isLoading, setIsLoading] = useState(!initialMetadata && !!file);
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
   const [exiftoolAvailable, setExiftoolAvailable] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
-    extractAllMetadata();
-  }, [file]);
+    if (initialMetadata && Object.keys(initialMetadata).length > 0) {
+      setMetadata(initialMetadata);
+      setIsLoading(false);
+      const result = calculateAlterationScore(initialMetadata);
+      setScoreResult(result);
+    } else if (file) {
+      extractAllMetadata();
+    }
+  }, [file, initialMetadata]);
 
   const formatValue = (value: any): string => {
     if (value instanceof Date) {
