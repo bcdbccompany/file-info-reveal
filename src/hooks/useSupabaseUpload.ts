@@ -13,7 +13,7 @@ export function useSupabaseUpload() {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
 
-  const uploadFile = async (file: File, webhookUrl?: string) => {
+  const uploadFile = async (file: File) => {
     setUploading(true);
     setProgress(null);
 
@@ -41,8 +41,7 @@ export function useSupabaseUpload() {
             data: base64,
             type: file.type,
             size: file.size
-          },
-          webhookUrl
+          }
         }
       });
 
@@ -57,6 +56,7 @@ export function useSupabaseUpload() {
         fileName: string;
         fileUrl?: string;
         status: string;
+        metadata?: any;
       };
 
       if (!uploadResult.success) {

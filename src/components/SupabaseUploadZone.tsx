@@ -4,22 +4,14 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useSupabaseUpload, UploadProgress } from '@/hooks/useSupabaseUpload';
-import { MetadataService } from '@/services/MetadataService';
 
 interface SupabaseUploadZoneProps {
-  onMetadataExtracted: (metadata: any, quickAnalysis: any) => void;
-  onProcessingComplete: (fullMetadata: any) => void;
-  externalProcessingUrl?: string;
+  onMetadataExtracted: (metadata: any) => void;
 }
 
-export function SupabaseUploadZone({ 
-  onMetadataExtracted, 
-  onProcessingComplete,
-  externalProcessingUrl 
-}: SupabaseUploadZoneProps) {
+export function SupabaseUploadZone({ onMetadataExtracted }: SupabaseUploadZoneProps) {
   const [isDragActive, setIsDragActive] = useState(false);
-  const [quickAnalysis, setQuickAnalysis] = useState<any>(null);
-  const { uploading, progress, uploadFile, checkJobStatus, clearProgress } = useSupabaseUpload();
+  const { uploading, progress, uploadFile, clearProgress } = useSupabaseUpload();
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes';
@@ -54,19 +46,11 @@ export function SupabaseUploadZone({
 
   const processFile = async (file: File) => {
     try {
-      // Análise rápida com ExifReader (imediata)
-      console.log('Iniciando análise rápida...');
-      const quickMetadata = await MetadataService.extractMetadata(file);
-      setQuickAnalysis(quickMetadata);
-      onMetadataExtracted(quickMetadata, { isQuickAnalysis: true });
-
-      // Upload e processamento completo
-      console.log('Iniciando upload para Supabase...');
-      const uploadResult = await uploadFile(file, externalProcessingUrl);
+      console.log('Iniciando upload e processamento...');
+      const uploadResult = await uploadFile(file);
       
-      // Se não há serviço externo, consideramos completo
-      if (!externalProcessingUrl) {
-        onProcessingComplete(quickMetadata);
+      if (uploadResult.metadata) {
+        onMetadataExtracted(uploadResult.metadata);
       }
 
     } catch (error) {
@@ -83,19 +67,18 @@ export function SupabaseUploadZone({
     if (files.length > 0) {
       await processFile(files[0]);
     }
-  }, [externalProcessingUrl]);
+  }, []);
 
   const handleFileInput = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
       await processFile(files[0]);
     }
-  }, [externalProcessingUrl]);
+  }, []);
 
   const handleRemove = () => {
-    setQuickAnalysis(null);
     clearProgress();
-    onMetadataExtracted({}, { isQuickAnalysis: false });
+    onMetadataExtracted({});
   };
 
   const getStatusIcon = (status?: string) => {
@@ -114,17 +97,15 @@ export function SupabaseUploadZone({
   const getStatusText = (status?: string) => {
     switch (status) {
       case 'completed':
-        return 'Análise completa concluída';
+        return 'Análise de metadados concluída';
       case 'failed':
-        return 'Falha na análise completa';
-      case 'processing':
-        return 'Processando análise completa...';
+        return 'Falha na análise de metadados';
       default:
-        return 'Aguardando processamento...';
+        return 'Processando...';
     }
   };
 
-  if (progress || quickAnalysis) {
+  if (progress) {
     return (
       <div className="border-2 border-dashed border-border rounded-lg p-6 bg-muted/30">
         <div className="flex items-center justify-between mb-4">
@@ -152,11 +133,11 @@ export function SupabaseUploadZone({
           </Button>
         </div>
 
-        {quickAnalysis && (
+        {progress?.status === 'completed' && (
           <Alert className="mb-4">
             <CheckCircle className="h-4 w-4" />
             <AlertDescription>
-              Análise rápida concluída! {externalProcessingUrl ? 'Análise completa em andamento...' : ''}
+              Análise de metadados concluída com sucesso!
             </AlertDescription>
           </Alert>
         )}
@@ -207,14 +188,6 @@ export function SupabaseUploadZone({
       <p className="text-sm text-muted-foreground">
         Suporta: JPEG, PNG, WebP, TIFF, BMP, GIF (máx. 20MB)
       </p>
-      
-      {externalProcessingUrl && (
-        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
-          <p className="text-sm text-blue-700">
-            🔧 Análise ExifTool habilitada - Análise forense completa disponível
-          </p>
-        </div>
-      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4'
 import { corsHeaders } from '../_shared/cors.ts'
+import ExifReader from 'https://esm.sh/exifreader@4.32.0'
 
 interface UploadRequest {
   file: {
@@ -8,7 +9,13 @@ interface UploadRequest {
     type: string
     size: number
   }
-  webhookUrl?: string
+}
+
+interface MetadataResult {
+  exif?: any
+  iptc?: any
+  xmp?: any
+  fileInfo?: any
 }
 
 Deno.serve(async (req) => {
@@ -46,7 +53,7 @@ Deno.serve(async (req) => {
     }
 
     const requestData: UploadRequest = await req.json()
-    const { file, webhookUrl } = requestData
+    const { file } = requestData
 
     // Validate file data
     if (!file || !file.name || !file.data || !file.type) {
@@ -101,6 +108,46 @@ Deno.serve(async (req) => {
 
     console.log('File uploaded successfully:', uploadData.path)
 
+    // Extract metadata directly from the uploaded file
+    let metadata: MetadataResult = {}
+    
+    try {
+      console.log('Extracting metadata from file...')
+      
+      // Extract EXIF, IPTC, XMP metadata using ExifReader
+      const tags = ExifReader.load(binaryData)
+      
+      metadata = {
+        exif: {},
+        iptc: {},
+        xmp: {},
+        fileInfo: {
+          size: file.size,
+          type: file.type,
+          name: file.name,
+          lastModified: new Date().toISOString()
+        }
+      }
+
+      // Process tags by type
+      for (const [name, tag] of Object.entries(tags)) {
+        if (name.startsWith('exif:') || name.startsWith('EXIF ')) {
+          metadata.exif[name] = tag
+        } else if (name.startsWith('iptc:') || name.startsWith('IPTC ')) {
+          metadata.iptc[name] = tag
+        } else if (name.startsWith('xmp:') || name.startsWith('XMP ')) {
+          metadata.xmp[name] = tag
+        } else {
+          metadata.exif[name] = tag // Default to EXIF for unspecified tags
+        }
+      }
+      
+      console.log('Metadata extraction completed successfully')
+    } catch (metadataError) {
+      console.error('Metadata extraction error:', metadataError)
+      // Continue with empty metadata if extraction fails
+    }
+
     // Create metadata processing job
     const { data: jobData, error: jobError } = await supabase
       .from('metadata_jobs')
@@ -109,8 +156,7 @@ Deno.serve(async (req) => {
         file_path: uploadData.path,
         file_name: file.name,
         file_size: file.size,
-        webhook_url: webhookUrl,
-        status: 'pending'
+        status: 'completed'
       })
       .select()
       .single()
@@ -123,50 +169,31 @@ Deno.serve(async (req) => {
       )
     }
 
-    console.log('Processing job created:', jobData.id)
+    // Save metadata to database
+    const { error: metadataError } = await supabase
+      .from('file_metadata')
+      .insert({
+        job_id: jobData.id,
+        user_id: user.id,
+        file_path: uploadData.path,
+        file_name: file.name,
+        exif_data: metadata.exif,
+        iptc_data: metadata.iptc,
+        xmp_data: metadata.xmp,
+        file_info: metadata.fileInfo
+      })
+
+    if (metadataError) {
+      console.error('Metadata save error:', metadataError)
+      // Don't fail the request if metadata save fails
+    }
 
     // Get signed URL for file access
     const { data: signedUrlData } = await supabase.storage
       .from('image-uploads')
       .createSignedUrl(uploadData.path, 3600) // 1 hour expiry
 
-    // If webhook URL is provided, trigger external processing
-    if (webhookUrl) {
-      console.log('Triggering external processing webhook:', webhookUrl)
-      
-      try {
-        // Get public URL for the external service to access
-        const { data: publicUrlData } = supabase.storage
-          .from('image-uploads')
-          .getPublicUrl(uploadData.path)
-
-        await fetch(webhookUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            jobId: jobData.id,
-            userId: user.id,
-            fileName: file.name,
-            fileUrl: publicUrlData.publicUrl,
-            filePath: uploadData.path,
-            callbackUrl: `${Deno.env.get('SUPABASE_URL')}/functions/v1/metadata-callback`
-          })
-        })
-
-        // Update job status to processing
-        await supabase
-          .from('metadata_jobs')
-          .update({ status: 'processing' })
-          .eq('id', jobData.id)
-
-        console.log('External processing webhook sent successfully')
-      } catch (webhookError) {
-        console.error('Webhook error:', webhookError)
-        // Don't fail the request if webhook fails - job can be processed later
-      }
-    }
+    console.log('Processing completed successfully')
 
     return new Response(
       JSON.stringify({
@@ -175,7 +202,8 @@ Deno.serve(async (req) => {
         filePath: uploadData.path,
         fileName: file.name,
         fileUrl: signedUrlData?.signedUrl,
-        status: webhookUrl ? 'processing' : 'pending'
+        status: 'completed',
+        metadata: metadata
       }),
       { 
         status: 200, 
