@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { SupabaseUploadZone } from '@/components/SupabaseUploadZone';
-import MetadataDisplay from '@/components/MetadataDisplay';
+import { MetadataDisplay } from '@/components/MetadataDisplay';
 
 export default function Index() {
   const [metadata, setMetadata] = useState<any>({});

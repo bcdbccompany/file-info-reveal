@@ -7,7 +7,7 @@ import type { FileMetadata, ScoreResult } from '../types';
 
 export function useMetadataExtraction(file?: File, initialMetadata?: FileMetadata) {
   const [metadata, setMetadata] = useState<FileMetadata>(initialMetadata || {});
-  const [isLoading, setIsLoading] = useState(!initialMetadata && !!file);
+  const [isLoading, setIsLoading] = useState(false);
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
   const [exiftoolAvailable, setExiftoolAvailable] = useState(false);
   const { toast } = useToast();
@@ -57,13 +57,11 @@ export function useMetadataExtraction(file?: File, initialMetadata?: FileMetadat
   }, [file, toast]);
 
   const downloadMetadataAsJson = useCallback(() => {
-    if (!file) return;
-
     const jsonData = {
-      fileName: file.name,
-      fileSize: file.size,
-      fileType: file.type,
-      lastModified: new Date(file.lastModified).toISOString(),
+      fileName: file?.name || 'unknown',
+      fileSize: file?.size || 0,
+      fileType: file?.type || 'unknown',
+      lastModified: file ? new Date(file.lastModified).toISOString() : new Date().toISOString(),
       extractionTimestamp: new Date().toISOString(),
       exifReaderAvailable: exiftoolAvailable,
       metadata: metadata,
@@ -77,7 +75,8 @@ export function useMetadataExtraction(file?: File, initialMetadata?: FileMetadat
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `metadata_${file.name.replace(/\.[^/.]+$/, '')}_${Date.now()}.json`;
+    const fileName = file?.name?.replace(/\.[^/.]+$/, '') || 'metadata';
+    a.download = `metadata_${fileName}_${Date.now()}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

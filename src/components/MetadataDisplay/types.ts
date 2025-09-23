@@ -32,5 +32,5 @@ export interface ScoreResult {
 
 export interface MetadataDisplayProps {
   file?: File;
-  metadata?: FileMetadata;
+  metadata: FileMetadata;
 }
