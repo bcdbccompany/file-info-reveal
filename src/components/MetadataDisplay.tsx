@@ -1265,10 +1265,7 @@ export default function MetadataDisplay({ file }: MetadataDisplayProps) {
           )}
         </CardTitle>
         <p className="text-muted-foreground">
-          {exiftoolAvailable 
-            ? "Metadados extraídos com ExifReader - Análise completa"
-            : "Informações detalhadas extraídas com parser JavaScript"
-          }
+          Metadados extraídos com ExifReader - Biblioteca JavaScript completa para análise de arquivos
         </p>
         <div className="mt-4">
           <Button 
