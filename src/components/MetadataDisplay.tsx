@@ -45,7 +45,7 @@ interface MetadataDisplayProps {
   metadata?: FileMetadata;
 }
 
-export default function MetadataDisplay({ file, metadata: initialMetadata }: MetadataDisplayProps) {
+function MetadataDisplay({ file, metadata: initialMetadata }: MetadataDisplayProps) {
   const [metadata, setMetadata] = useState<FileMetadata>(initialMetadata || {});
   const [isLoading, setIsLoading] = useState(!initialMetadata && !!file);
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
@@ -1500,3 +1500,5 @@ export default function MetadataDisplay({ file, metadata: initialMetadata }: Met
     </Card>
   );
 }
+
+export default MetadataDisplay;
