@@ -32,25 +32,8 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // Get user from JWT token
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Authorization header required' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
-      authHeader.replace('Bearer ', '')
-    )
-
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid or expired token' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
+    // No authentication required for public access
+    console.log('Processing public upload request')
 
     const requestData: UploadRequest = await req.json()
     const { file } = requestData
@@ -80,11 +63,11 @@ Deno.serve(async (req) => {
       )
     }
 
-    // Generate unique file path
+    // Generate unique file path for public uploads
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
     const extension = file.name.split('.').pop()
     const fileName = `${timestamp}_${crypto.randomUUID()}.${extension}`
-    const filePath = `${user.id}/${fileName}`
+    const filePath = `public/${fileName}`
 
     // Convert base64 to Uint8Array
     const base64Data = file.data.split(',')[1] || file.data
@@ -152,7 +135,7 @@ Deno.serve(async (req) => {
     const { data: jobData, error: jobError } = await supabase
       .from('metadata_jobs')
       .insert({
-        user_id: user.id,
+        user_id: null, // Public access - no user required
         file_path: uploadData.path,
         file_name: file.name,
         file_size: file.size,
@@ -174,7 +157,7 @@ Deno.serve(async (req) => {
       .from('file_metadata')
       .insert({
         job_id: jobData.id,
-        user_id: user.id,
+        user_id: null, // Public access - no user required
         file_path: uploadData.path,
         file_name: file.name,
         exif_data: metadata.exif,

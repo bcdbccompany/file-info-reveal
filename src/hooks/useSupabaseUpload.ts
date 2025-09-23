@@ -26,12 +26,8 @@ export function useSupabaseUpload() {
         reader.readAsDataURL(file);
       });
 
-      // Get current user session
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      if (sessionError || !session) {
-        throw new Error('User not authenticated');
-      }
+      // No authentication required for public uploads
+      console.log('Starting public file upload')
 
       // Call upload edge function
       const { data, error } = await supabase.functions.invoke('upload-and-process', {
