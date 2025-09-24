@@ -107,40 +107,88 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     const missingEssentialExif = !hasMake || !hasModel || !hasISO || !hasCreateDate;
     // EXIF ausente não pontua mais - apenas usado como condição para outras regras
 
-    // 2. Software explícito (peso 4) - Detectar tags de software de edição
-    const softwareFields = [
-      exifData['EXIF:Software'],
-      exifData['EXIF:Creator'], 
-      exifData['XMP:CreatorTool'],
-      exifData['XMP:Software'],
-      exifData['IFD0:Software']
-    ].filter(Boolean);
+    // 2. Software explícito (peso 4) - Detecção robusta de tags Adobe/Photoshop
+    const allExifFields = Object.keys(exifData);
+    const allExifValues = Object.values(exifData).map(v => String(v).toLowerCase());
+    const allExifText = allExifFields.join(' ').toLowerCase() + ' ' + allExifValues.join(' ');
     
-    // Debug: Log dos campos de software encontrados
-    console.log('Software fields encontrados:', softwareFields);
-    console.log('Todos os campos EXIF disponíveis que contêm "Software" ou "Creator":', 
-      Object.keys(exifData).filter(key => 
-        key.toLowerCase().includes('software') || 
-        key.toLowerCase().includes('creator') || 
-        key.toLowerCase().includes('tool')
-      ).map(key => `${key}: ${exifData[key]}`)
+    // Debug: Log detalhado para Adobe/Photoshop
+    console.log('=== DEBUG ADOBE/PHOTOSHOP ===');
+    
+    const adobeFields = allExifFields.filter(key => {
+      const keyLower = key.toLowerCase();
+      const valueLower = String(exifData[key]).toLowerCase();
+      return keyLower.includes('adobe') || keyLower.includes('photoshop') || keyLower.includes('app14') ||
+             valueLower.includes('adobe') || valueLower.includes('photoshop');
+    });
+    
+    console.log('Campos que contêm Adobe/Photoshop/APP14:', 
+      adobeFields.map(key => `${key}: ${exifData[key]}`)
     );
     
-    const editingSoftware = softwareFields.some(software => {
-      const soft = software.toString().toLowerCase();
-      console.log('Verificando software:', soft);
-      return soft.includes('photoshop') || soft.includes('gimp') || 
-             soft.includes('pixelmator') || soft.includes('canva') ||
-             soft.includes('lightroom') || soft.includes('editor') ||
-             soft.includes('paint') || soft.includes('sketch') ||
-             soft.includes('photopea') || soft.includes('pixlr') ||
-             soft.includes('fotor') || soft.includes('befunky');
-    });
+    // Verificações específicas para debugging
+    console.log('ICC-header:ProfileCreator:', exifData['ICC-header:ProfileCreator']);
+    console.log('Campos APP14:', allExifFields.filter(key => key.toLowerCase().includes('app14')));
+    console.log('Campos que começam com Adobe:', allExifFields.filter(key => key.startsWith('Adobe:')));
+    
+    // Busca robusta por indicadores Adobe/Photoshop
+    const adobeIndicators = [
+      // Tags diretas Adobe/Photoshop em qualquer campo
+      allExifText.includes('photoshop'),
+      allExifText.includes('adobe'),
+      
+      // APP14 e flags Adobe específicos
+      allExifFields.some(key => key.toLowerCase().includes('app14')),
+      exifData['APP14:ColorTransform'] !== undefined,
+      exifData['APP14:DCTEncodeVersion'] !== undefined,
+      exifData['Adobe:DCTEncodeVersion'] !== undefined,
+      
+      // Campos Adobe específicos por prefixo
+      allExifFields.some(key => key.startsWith('Adobe:')),
+      allExifFields.some(key => key.startsWith('Photoshop:')),
+      
+      // Software de edição nos campos tradicionais
+      ['EXIF:Software', 'IFD0:Software', 'XMP:CreatorTool', 'EXIF:Creator', 'XMP:Software'].some(field => {
+        const soft = String(exifData[field] || '').toLowerCase();
+        return soft.includes('photoshop') || soft.includes('lightroom') || soft.includes('adobe') ||
+               soft.includes('gimp') || soft.includes('pixelmator') || soft.includes('canva') ||
+               soft.includes('editor') || soft.includes('paint') || soft.includes('sketch');
+      }),
+      
+      // ICC Profile HP/Adobe (indicador adicional)
+      String(exifData['ICC-header:ProfileCreator'] || '').toLowerCase().includes('hewlett-packard') ||
+      String(exifData['ICC_Profile:ProfileDescription'] || '').toLowerCase().includes('adobe'),
+      
+      // Outros padrões técnicos Adobe
+      exifData['JFIF:YCbCrSubSampling'] === '4 4 4' && allExifText.includes('adobe')
+    ];
+    
+    const activeIndicators = adobeIndicators.map((indicator, index) => {
+      const labels = [
+        'Photoshop no texto',
+        'Adobe no texto', 
+        'Campos APP14',
+        'APP14:ColorTransform',
+        'APP14:DCTEncodeVersion',
+        'Adobe:DCTEncodeVersion',
+        'Prefixo Adobe:',
+        'Prefixo Photoshop:',
+        'Software de edição',
+        'ICC HP/Adobe',
+        'YCbCr 4:4:4 + Adobe'
+      ];
+      return indicator ? labels[index] : null;
+    }).filter(Boolean);
+    
+    console.log('Indicadores Adobe encontrados:', activeIndicators);
+    
+    const editingSoftware = adobeIndicators.some(indicator => indicator);
+    console.log('editingSoftware (Adobe/Photoshop):', editingSoftware);
     
     if (editingSoftware) {
       score += 4;
       indicators.push('Software explícito');
-      details.push('Software explícito (+4): Software de edição detectado nos metadados');
+      details.push(`Software explícito (+4): ${activeIndicators.join(', ')}`);
     }
 
     // 3. XMP/Tags IA (peso 5) - Procurar tags específicas de IA
