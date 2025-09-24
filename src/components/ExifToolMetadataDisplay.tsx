@@ -186,9 +186,9 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     console.log('editingSoftware (Adobe/Photoshop):', editingSoftware);
     
     if (editingSoftware) {
-      score += 4;
+      score += 13;
       indicators.push('Software explícito');
-      details.push(`Software explícito (+4): ${activeIndicators.join(', ')}`);
+      details.push(`Software explícito (+13): ${activeIndicators.join(', ')}`);
     }
 
     // 3. XMP/Tags IA (peso 5) - Procurar tags específicas de IA
