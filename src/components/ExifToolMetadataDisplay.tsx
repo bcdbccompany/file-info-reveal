@@ -269,15 +269,23 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
 
     // 8. SceneType inconsistente (peso 2) - Detectar valor "Unknown" ou ausente (BeFunky/editores)
     const sceneType = exifData['EXIF:SceneType'] || exifData['EXIF:SceneCaptureType'] || 
-                      exifData['IFD0:SceneType'] || exifData['IFD0:SceneCaptureType'];
+                      exifData['IFD0:SceneType'] || exifData['IFD0:SceneCaptureType'] ||
+                      exifData['ExifIFD:SceneType'] || exifData['ExifIFD:SceneCaptureType'];
     
-    const hasInconsistentSceneType = sceneType === 'Unknown' || sceneType === 'unknown' || 
-                                     sceneType === 0 || sceneType === '0';
+    // Detectar "Unknown" mesmo com texto adicional como "Unknown (49)"
+    const sceneTypeStr = String(sceneType || '').toLowerCase();
+    const hasInconsistentSceneType = sceneType && (
+      sceneTypeStr.includes('unknown') || 
+      sceneType === 0 || 
+      sceneType === '0'
+    );
     
     if (hasInconsistentSceneType) {
       score += 2;
       indicators.push('SceneType inconsistente');
       details.push(`SceneType inconsistente (+2): Valor "${sceneType}" típico de editores como BeFunky`);
+      console.log('SceneType detectado:', sceneType, 'Campo encontrado:', Object.keys(exifData).find(key => 
+        key.includes('SceneType') || key.includes('SceneCaptureType')));
     }
 
     return { 
