@@ -75,153 +75,100 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     return groups;
   }, [exifData]);
 
-  // Validation matrix-based metadata score calculation
-  const metadataScore = useMemo(() => {
+  // Manipulation Detection Score - calculates suspicion points based on forensic validation matrix
+  const manipulationScore = useMemo(() => {
     let score = 0;
-    const validationMatrix = {
-      // Categoria 1: Integridade do Arquivo (25 pontos)
-      fileIntegrity: {
-        fileName: fileMetadata.file_name ? 5 : 0,
-        mimeType: fileMetadata.mime_type ? 5 : 0,
-        fileSize: fileMetadata.size_bytes ? 5 : 0,
-        basicStructure: Object.keys(exifData).length > 0 ? 10 : 0,
-      },
-      
-      // Categoria 2: Dados de Origem (25 pontos)
-      originData: {
-        cameraManufacturer: exifData['EXIF:Make'] ? 8 : 0,
-        cameraModel: exifData['EXIF:Model'] ? 8 : 0,
-        softwareUsed: (exifData['EXIF:Software'] || exifData['XMP:CreatorTool']) ? 9 : 0,
-      },
-      
-      // Categoria 3: Dados Temporais (20 pontos)
-      temporalData: {
-        dateTimeOriginal: exifData['EXIF:DateTimeOriginal'] ? 8 : 0,
-        dateTime: exifData['EXIF:DateTime'] ? 4 : 0,
-        dateTimeDigitized: exifData['EXIF:DateTimeDigitized'] ? 4 : 0,
-        modifyDate: (exifData['EXIF:ModifyDate'] || exifData['XMP:ModifyDate']) ? 4 : 0,
-      },
-      
-      // Categoria 4: Parâmetros Técnicos (15 pontos)
-      technicalParams: {
-        resolution: (exifData['EXIF:ExifImageWidth'] && exifData['EXIF:ExifImageHeight']) ? 4 : 0,
-        iso: (exifData['EXIF:ISO'] || exifData['EXIF:ISOSpeedRatings']) ? 3 : 0,
-        aperture: (exifData['EXIF:FNumber'] || exifData['EXIF:ApertureValue']) ? 4 : 0,
-        exposureTime: (exifData['EXIF:ExposureTime'] || exifData['EXIF:ShutterSpeedValue']) ? 4 : 0,
-      },
-      
-      // Categoria 5: Dados de Localização (10 pontos)
-      locationData: {
-        gpsCoordinates: (exifData['GPS:GPSLatitude'] && exifData['GPS:GPSLongitude']) ? 10 : 0,
-      },
-      
-      // Categoria 6: Validação Cruzada (5 pontos)
-      crossValidation: {
-        consistencyCheck: (() => {
-          const hasDateTime = exifData['EXIF:DateTimeOriginal'];
-          const hasCamera = exifData['EXIF:Make'] && exifData['EXIF:Model'];
-          const hasTechnical = (exifData['EXIF:ISO'] || exifData['EXIF:FNumber']);
-          
-          if (hasDateTime && hasCamera && hasTechnical) return 5;
-          if ((hasDateTime && hasCamera) || (hasCamera && hasTechnical)) return 3;
-          if (hasDateTime || hasCamera || hasTechnical) return 1;
-          return 0;
-        })(),
-      }
-    };
-
-    // Calculate total score from validation matrix
-    Object.values(validationMatrix).forEach(category => {
-      Object.values(category).forEach(points => {
-        score += points;
-      });
-    });
-
-    return Math.min(score, 100);
-  }, [exifData, fileMetadata]);
-
-  // Generate detailed validation report
-  const validationReport = useMemo(() => {
-    const report = {
-      categories: [
-        {
-          name: 'Integridade do Arquivo',
-          score: (fileMetadata.file_name ? 5 : 0) + (fileMetadata.mime_type ? 5 : 0) + 
-                 (fileMetadata.size_bytes ? 5 : 0) + (Object.keys(exifData).length > 0 ? 10 : 0),
-          maxScore: 25,
-          items: [
-            { name: 'Nome do arquivo', present: !!fileMetadata.file_name, points: 5 },
-            { name: 'Tipo MIME', present: !!fileMetadata.mime_type, points: 5 },
-            { name: 'Tamanho do arquivo', present: !!fileMetadata.size_bytes, points: 5 },
-            { name: 'Estrutura básica', present: Object.keys(exifData).length > 0, points: 10 },
-          ]
-        },
-        {
-          name: 'Dados de Origem',
-          score: (exifData['EXIF:Make'] ? 8 : 0) + (exifData['EXIF:Model'] ? 8 : 0) + 
-                 ((exifData['EXIF:Software'] || exifData['XMP:CreatorTool']) ? 9 : 0),
-          maxScore: 25,
-          items: [
-            { name: 'Fabricante da câmera', present: !!exifData['EXIF:Make'], points: 8 },
-            { name: 'Modelo da câmera', present: !!exifData['EXIF:Model'], points: 8 },
-            { name: 'Software utilizado', present: !!(exifData['EXIF:Software'] || exifData['XMP:CreatorTool']), points: 9 },
-          ]
-        },
-        {
-          name: 'Dados Temporais',
-          score: (exifData['EXIF:DateTimeOriginal'] ? 8 : 0) + (exifData['EXIF:DateTime'] ? 4 : 0) + 
-                 (exifData['EXIF:DateTimeDigitized'] ? 4 : 0) + ((exifData['EXIF:ModifyDate'] || exifData['XMP:ModifyDate']) ? 4 : 0),
-          maxScore: 20,
-          items: [
-            { name: 'Data/hora original', present: !!exifData['EXIF:DateTimeOriginal'], points: 8 },
-            { name: 'Data/hora de modificação', present: !!exifData['EXIF:DateTime'], points: 4 },
-            { name: 'Data/hora de digitalização', present: !!exifData['EXIF:DateTimeDigitized'], points: 4 },
-            { name: 'Data de última modificação', present: !!(exifData['EXIF:ModifyDate'] || exifData['XMP:ModifyDate']), points: 4 },
-          ]
-        },
-        {
-          name: 'Parâmetros Técnicos',
-          score: ((exifData['EXIF:ExifImageWidth'] && exifData['EXIF:ExifImageHeight']) ? 4 : 0) + 
-                 ((exifData['EXIF:ISO'] || exifData['EXIF:ISOSpeedRatings']) ? 3 : 0) +
-                 ((exifData['EXIF:FNumber'] || exifData['EXIF:ApertureValue']) ? 4 : 0) +
-                 ((exifData['EXIF:ExposureTime'] || exifData['EXIF:ShutterSpeedValue']) ? 4 : 0),
-          maxScore: 15,
-          items: [
-            { name: 'Resolução da imagem', present: !!(exifData['EXIF:ExifImageWidth'] && exifData['EXIF:ExifImageHeight']), points: 4 },
-            { name: 'ISO/Sensibilidade', present: !!(exifData['EXIF:ISO'] || exifData['EXIF:ISOSpeedRatings']), points: 3 },
-            { name: 'Abertura/F-number', present: !!(exifData['EXIF:FNumber'] || exifData['EXIF:ApertureValue']), points: 4 },
-            { name: 'Tempo de exposição', present: !!(exifData['EXIF:ExposureTime'] || exifData['EXIF:ShutterSpeedValue']), points: 4 },
-          ]
-        },
-        {
-          name: 'Dados de Localização',
-          score: (exifData['GPS:GPSLatitude'] && exifData['GPS:GPSLongitude']) ? 10 : 0,
-          maxScore: 10,
-          items: [
-            { name: 'Coordenadas GPS', present: !!(exifData['GPS:GPSLatitude'] && exifData['GPS:GPSLongitude']), points: 10 },
-          ]
-        },
-        {
-          name: 'Validação Cruzada',
-          score: (() => {
-            const hasDateTime = exifData['EXIF:DateTimeOriginal'];
-            const hasCamera = exifData['EXIF:Make'] && exifData['EXIF:Model'];
-            const hasTechnical = (exifData['EXIF:ISO'] || exifData['EXIF:FNumber']);
-            
-            if (hasDateTime && hasCamera && hasTechnical) return 5;
-            if ((hasDateTime && hasCamera) || (hasCamera && hasTechnical)) return 3;
-            if (hasDateTime || hasCamera || hasTechnical) return 1;
-            return 0;
-          })(),
-          maxScore: 5,
-          items: [
-            { name: 'Consistência entre metadados', present: true, points: 'Variável (1-5)' },
-          ]
-        }
-      ]
-    };
+    const detectedIndicators: string[] = [];
     
-    return report;
+    // 1. File Size (1 point - Weak indicator)
+    const expectedSize = fileMetadata.size_bytes;
+    if (expectedSize && expectedSize < 50000) { // Very small file size (< 50KB) could indicate compression
+      score += 1;
+      detectedIndicators.push('Tamanho de arquivo reduzido');
+    }
+    
+    // 2. Progressive DCT Encoding (3 points - Medium indicator)
+    const progressiveIndicators = [
+      exifData['JFIF:ProgressiveDCT'],
+      exifData['File:EncodingProcess']?.includes?.('Progressive'),
+      exifData['EXIF:ColorSpace'] === 'Uncalibrated' // Often appears with progressive
+    ];
+    if (progressiveIndicators.some(Boolean)) {
+      score += 3;
+      detectedIndicators.push('Codificação Progressive DCT');
+    }
+    
+    // 3. YCbCr 4:4:4 Color Subsampling (3 points - Medium indicator)
+    const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'];
+    if (subsampling === '1 1' || subsampling === '4:4:4' || 
+        (typeof subsampling === 'string' && subsampling.includes('4:4:4'))) {
+      score += 3;
+      detectedIndicators.push('Subamostragem de cor 4:4:4');
+    }
+    
+    // 4. ICC Profiles - HP/Adobe/Missing (3 points - Medium indicator)
+    const iccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC_Profile:ColorSpaceData'];
+    if (iccProfile) {
+      if (iccProfile.includes('HP') || iccProfile.includes('Hewlett')) {
+        score += 3;
+        detectedIndicators.push('Perfil ICC HP/Adobe');
+      } else if (iccProfile.includes('Adobe') || iccProfile.includes('Photoshop')) {
+        score += 3;
+        detectedIndicators.push('Perfil ICC Adobe/Photoshop');
+      }
+    } else if (!iccProfile && Object.keys(exifData).some(key => key.startsWith('ICC_Profile:'))) {
+      score += 3;
+      detectedIndicators.push('Perfil ICC ausente/genérico');
+    }
+    
+    // 5. Missing EXIF Camera Data (4 points - Strong indicator)
+    const hasBasicCameraData = exifData['EXIF:Make'] && exifData['EXIF:Model'] && 
+                              (exifData['EXIF:ISO'] || exifData['EXIF:ISOSpeedRatings']);
+    if (!hasBasicCameraData) {
+      score += 4;
+      detectedIndicators.push('EXIF de câmera ausente');
+    }
+    
+    // 6. Adobe/Photoshop Tags (3 points - Medium indicator)
+    const adobeTags = [
+      exifData['Photoshop:PhotoshopQuality'],
+      exifData['Photoshop:ProgressiveScans'],
+      exifData['APP14:DCTEncodeVersion'],
+      exifData['XMP:CreatorTool']?.includes?.('Adobe'),
+      exifData['XMP:CreatorTool']?.includes?.('Photoshop')
+    ];
+    if (adobeTags.some(Boolean)) {
+      score += 3;
+      detectedIndicators.push('Tags Adobe/Photoshop');
+    }
+    
+    // 7. Explicit Software Field (4 points - Strong indicator)
+    const softwareField = exifData['EXIF:Software'] || exifData['XMP:CreatorTool'];
+    if (softwareField && !softwareField.match(/^[A-Z]+\s*[0-9.]+$/)) { // Not camera firmware pattern
+      const suspiciousSoftware = ['Photoshop', 'Photopea', 'Canva', 'Pixlr', 'Fotor', 'BeFunky', 'GIMP'];
+      if (suspiciousSoftware.some(sw => softwareField.includes(sw))) {
+        score += 4;
+        detectedIndicators.push(`Software explícito: ${softwareField}`);
+      }
+    }
+    
+    // 8. Inconsistent Dates (3 points - Medium indicator) 
+    const dateOriginal = exifData['EXIF:DateTimeOriginal'];
+    const dateModify = exifData['EXIF:ModifyDate'] || exifData['XMP:ModifyDate'];
+    const dateCreate = exifData['EXIF:CreateDate'];
+    
+    if (dateOriginal && dateModify) {
+      const origDate = new Date(dateOriginal.replace(/:/g, '-', 2));
+      const modDate = new Date(dateModify.replace(/:/g, '-', 2));
+      const timeDiff = Math.abs(modDate.getTime() - origDate.getTime()) / (1000 * 60 * 60); // hours
+      
+      if (timeDiff > 24) { // More than 24 hours difference
+        score += 3;
+        detectedIndicators.push('Datas inconsistentes (>24h diferença)');
+      }
+    }
+    
+    return { score, indicators: detectedIndicators };
   }, [exifData, fileMetadata]);
 
   // Generate summary information
@@ -246,77 +193,121 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     return info;
   }, [exifData, fileMetadata]);
 
-  // Calculate co-occurrence bonus
+  // Co-occurrence bonuses for manipulation patterns
   const cooccurrenceBonus = useMemo(() => {
     let bonus = 0;
+    const appliedBonuses: string[] = [];
     
-    // Bônus por coocorrências que aumentam a confiabilidade forense
-    const bonusRules = [
-      // Coocorrência Câmera + Data/Hora + Parâmetros Técnicos (Bônus: 15 pontos)
-      {
-        condition: exifData['EXIF:Make'] && exifData['EXIF:Model'] && 
-                   exifData['EXIF:DateTimeOriginal'] && 
-                   (exifData['EXIF:ISO'] || exifData['EXIF:FNumber'] || exifData['EXIF:ExposureTime']),
-        points: 15,
-        description: 'Tríade de autenticidade: Câmera + Data/Hora + Parâmetros técnicos'
-      },
-      
-      // Coocorrência GPS + Data/Hora (Bônus: 12 pontos)
-      {
-        condition: (exifData['GPS:GPSLatitude'] && exifData['GPS:GPSLongitude']) && 
-                   exifData['EXIF:DateTimeOriginal'],
-        points: 12,
-        description: 'Rastreabilidade espaço-temporal: GPS + Data/Hora'
-      },
-      
-      // Coocorrência Software + Dados técnicos (Bônus: 8 pontos)
-      {
-        condition: (exifData['EXIF:Software'] || exifData['XMP:CreatorTool']) && 
-                   exifData['EXIF:Make'] && exifData['EXIF:Model'],
-        points: 8,
-        description: 'Cadeia de processamento: Software + Dispositivo'
-      },
-      
-      // Coocorrência Múltiplas datas (Bônus: 6 pontos)
-      {
-        condition: exifData['EXIF:DateTimeOriginal'] && exifData['EXIF:DateTime'] && 
-                   exifData['EXIF:DateTimeDigitized'],
-        points: 6,
-        description: 'Cronologia completa: Múltiplas timestamps'
-      },
-      
-      // Coocorrência Parâmetros técnicos completos (Bônus: 5 pontos)
-      {
-        condition: (exifData['EXIF:ISO'] || exifData['EXIF:ISOSpeedRatings']) && 
-                   (exifData['EXIF:FNumber'] || exifData['EXIF:ApertureValue']) && 
-                   (exifData['EXIF:ExposureTime'] || exifData['EXIF:ShutterSpeedValue']),
-        points: 5,
-        description: 'Triângulo de exposição: ISO + Abertura + Tempo'
-      },
-      
-      // Coocorrência Resolução + Qualidade (Bônus: 4 pontos)
-      {
-        condition: (exifData['EXIF:ExifImageWidth'] && exifData['EXIF:ExifImageHeight']) && 
-                   (exifData['EXIF:ColorSpace'] || exifData['EXIF:WhiteBalance']),
-        points: 4,
-        description: 'Qualidade de imagem: Resolução + Configurações de cor'
+    // Get indicators for bonus calculations
+    const hasProgressive = exifData['JFIF:ProgressiveDCT'] || 
+                          exifData['File:EncodingProcess']?.includes?.('Progressive');
+    const has444Subsampling = (() => {
+      const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'];
+      return subsampling === '1 1' || subsampling === '4:4:4' || 
+             (typeof subsampling === 'string' && subsampling.includes('4:4:4'));
+    })();
+    const hasAdobeICC = (() => {
+      const iccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC_Profile:ColorSpaceData'];
+      return iccProfile && (iccProfile.includes('HP') || iccProfile.includes('Adobe') || 
+                           iccProfile.includes('Photoshop') || iccProfile.includes('Hewlett'));
+    })();
+    const hasAdobeTags = [
+      exifData['Photoshop:PhotoshopQuality'],
+      exifData['Photoshop:ProgressiveScans'], 
+      exifData['APP14:DCTEncodeVersion'],
+      exifData['XMP:CreatorTool']?.includes?.('Adobe'),
+      exifData['XMP:CreatorTool']?.includes?.('Photoshop')
+    ].some(Boolean);
+    const hasInconsistentDates = (() => {
+      const dateOriginal = exifData['EXIF:DateTimeOriginal'];
+      const dateModify = exifData['EXIF:ModifyDate'] || exifData['XMP:ModifyDate'];
+      if (dateOriginal && dateModify) {
+        const origDate = new Date(dateOriginal.replace(/:/g, '-', 2));
+        const modDate = new Date(dateModify.replace(/:/g, '-', 2));
+        const timeDiff = Math.abs(modDate.getTime() - origDate.getTime()) / (1000 * 60 * 60);
+        return timeDiff > 24;
       }
-    ];
-    
-    bonusRules.forEach(rule => {
-      if (rule.condition) {
-        bonus += rule.points;
+      return false;
+    })();
+    const hasResizing = (() => {
+      // Check if resolution is non-standard or if there are resize indicators
+      const width = exifData['EXIF:ExifImageWidth'] || exifData['File:ImageWidth'];
+      const height = exifData['EXIF:ExifImageHeight'] || exifData['File:ImageHeight'];
+      if (width && height) {
+        // Common camera resolutions: 1920x1080, 4032x3024, etc.
+        const commonRatios = [16/9, 4/3, 3/2, 1/1];
+        const ratio = width / height;
+        const isStandardRatio = commonRatios.some(r => Math.abs(ratio - r) < 0.01);
+        return !isStandardRatio || (width % 16 !== 0) || (height % 16 !== 0);
       }
-    });
+      return false;
+    })();
+    const hasPreservedEXIF = exifData['EXIF:Make'] && exifData['EXIF:Model'];
+    const hasC2PA = Object.keys(exifData).some(key => 
+      key.includes('C2PA') || key.includes('JUMBF') || key.includes('Manifest'));
     
-    return { total: bonus, rules: bonusRules };
+    // Bonus 1: Progressive DCT + YCbCr 4:4:4 Subsampling (+2 points)
+    if (hasProgressive && has444Subsampling) {
+      bonus += 2;
+      appliedBonuses.push('Progressive DCT + Subamostragem 4:4:4 (+2)');
+    }
+    
+    // Bonus 2: ICC HP/Adobe + Adobe Tags (+2 points)  
+    if (hasAdobeICC && hasAdobeTags) {
+      bonus += 2;
+      appliedBonuses.push('ICC HP/Adobe + Tags Adobe (+2)');
+    }
+    
+    // Bonus 3: Inconsistent dates + (Progressive/4:4:4 OR ICC+Adobe) (+2 points)
+    if (hasInconsistentDates && ((hasProgressive || has444Subsampling) || (hasAdobeICC && hasAdobeTags))) {
+      bonus += 2;
+      appliedBonuses.push('Datas inconsistentes + padrão de edição (+2)');
+    }
+    
+    // Bonus 4: Resizing + (Progressive OR 4:4:4) (+2 points)
+    if (hasResizing && (hasProgressive || has444Subsampling)) {
+      bonus += 2;
+      appliedBonuses.push('Redimensionamento + reprocessamento (+2)');
+    }
+    
+    // Bonus 5: Preserved EXIF + C2PA AI (+5 points)
+    if (hasPreservedEXIF && hasC2PA) {
+      bonus += 5;
+      appliedBonuses.push('EXIF preservado + C2PA IA (+5)');
+    }
+    
+    return { total: bonus, applied: appliedBonuses };
   }, [exifData]);
 
-  // Calculate final score
+  // Calculate final suspicion score
   const finalScore = useMemo(() => {
-    return Math.min(metadataScore + cooccurrenceBonus.total, 120); // Máximo 120 (100 base + 20 bônus)
-  }, [metadataScore, cooccurrenceBonus.total]);
+    return Math.min(manipulationScore.score + cooccurrenceBonus.total, 50); // Maximum reasonable suspicion score
+  }, [manipulationScore.score, cooccurrenceBonus.total]);
 
+  // Determine digital transport pattern
+  const isDigitalTransport = useMemo(() => {
+    const hasNoEXIF = !(exifData['EXIF:Make'] && exifData['EXIF:Model']);
+    const hasReduction = fileMetadata.size_bytes && fileMetadata.size_bytes < 200000; // < 200KB
+    const has420Subsampling = (() => {
+      const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'];
+      return subsampling === '2 2' || subsampling === '4:2:0' || 
+             (typeof subsampling === 'string' && subsampling.includes('4:2:0'));
+    })();
+    const hasNoSoftware = !exifData['EXIF:Software'] && !exifData['XMP:CreatorTool'];
+    
+    return hasNoEXIF && hasReduction && has420Subsampling && hasNoSoftware;
+  }, [exifData, fileMetadata]);
+
+  // Apply digital transport limitation
+  const adjustedScore = isDigitalTransport ? Math.min(finalScore, 7) : finalScore;
+
+  // Classification based on final score
+  const classification = useMemo(() => {
+    if (adjustedScore <= 3) return { level: 'Baixo', description: 'Normal', color: 'text-green-600', bgColor: 'bg-green-50' };
+    if (adjustedScore <= 7) return { level: 'Moderado', description: 'Suspeita moderada', color: 'text-yellow-600', bgColor: 'bg-yellow-50' };
+    if (adjustedScore <= 12) return { level: 'Forte', description: 'Suspeito', color: 'text-orange-600', bgColor: 'bg-orange-50' };
+    return { level: 'Muito Forte', description: 'Provável fraude', color: 'text-red-600', bgColor: 'bg-red-50' };
+  }, [adjustedScore]);
 
   const formatValue = (value: any): string => {
     if (value === null || value === undefined) return 'N/A';
@@ -328,13 +319,21 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     const dataStr = JSON.stringify({ 
       fileInfo: fileMetadata,
       exifData: exifData,
-      organizedData: organizedMetadata 
+      organizedData: organizedMetadata,
+      manipulationAnalysis: {
+        score: manipulationScore.score,
+        indicators: manipulationScore.indicators,
+        cooccurrenceBonus: cooccurrenceBonus.total,
+        finalScore: adjustedScore,
+        classification: classification,
+        isDigitalTransport
+      }
     }, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(dataBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `metadata_${fileMetadata.file_name || 'arquivo'}.json`;
+    link.download = `manipulation_analysis_${fileMetadata.file_name || 'arquivo'}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -403,21 +402,21 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
         </div>
       </div>
 
-      {/* Final Score Section */}
+      {/* Manipulation Analysis Section */}
       <div className="bg-gradient-card border border-border rounded-lg p-6 shadow-card">
         <div className="text-center mb-6">
-          <h3 className="text-2xl font-bold text-foreground mb-2">Pontuação Final de Confiabilidade</h3>
+          <h3 className="text-2xl font-bold text-foreground mb-2">Análise de Suspeição de Manipulação</h3>
           <p className="text-muted-foreground">
-            Score base da matriz + bônus de coocorrência = pontuação final
+            Detecção de indícios de manipulação baseada na matriz forense
           </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           {/* Score Base */}
           <div className="text-center p-4 bg-muted/30 rounded-lg">
-            <div className="text-3xl font-bold text-primary mb-2">{metadataScore}</div>
+            <div className="text-3xl font-bold text-primary mb-2">{manipulationScore.score}</div>
             <div className="text-sm text-muted-foreground mb-1">Score Base</div>
-            <div className="text-xs text-muted-foreground">Matriz de Validação</div>
+            <div className="text-xs text-muted-foreground">Indícios de Manipulação</div>
           </div>
 
           {/* Bônus de Coocorrência */}
@@ -429,162 +428,108 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
 
           {/* Pontuação Final */}
           <div className="text-center p-4 bg-gradient-to-br from-primary/20 to-primary/10 rounded-lg border-2 border-primary/30">
-            <div className={`text-4xl font-bold mb-2 ${finalScore >= 90 ? 'text-green-500' : finalScore >= 70 ? 'text-yellow-500' : 'text-red-500'}`}>
-              {finalScore}/120
+            <div className="text-4xl font-bold text-primary mb-2">{adjustedScore}</div>
+            <div className="text-sm text-muted-foreground mb-1">Pontuação Final</div>
+            <div className="text-xs text-muted-foreground">Suspeição de Manipulação</div>
+            {isDigitalTransport && (
+              <div className="text-xs text-yellow-600 mt-1">*Limitado por padrão de transporte digital</div>
+            )}
+          </div>
+        </div>
+
+        {/* Classification */}
+        <div className={`p-6 rounded-lg border-2 ${classification.bgColor} border-current`}>
+          <div className="text-center">
+            <div className={`text-2xl font-bold ${classification.color} mb-2`}>
+              Nível de Suspeição: {classification.level}
             </div>
-            <div className="text-sm font-semibold text-foreground mb-1">PONTUAÇÃO FINAL</div>
-            <div className={`text-xs font-medium ${finalScore >= 90 ? 'text-green-500' : finalScore >= 70 ? 'text-yellow-500' : 'text-red-500'}`}>
-              {finalScore >= 90 ? 'ALTA CONFIABILIDADE' : 
-               finalScore >= 70 ? 'CONFIABILIDADE MÉDIA' : 
-               'BAIXA CONFIABILIDADE'}
+            <div className="text-muted-foreground mb-4">{classification.description}</div>
+            <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+              <div 
+                className={`h-full transition-all duration-300 ${
+                  adjustedScore <= 3 ? 'bg-green-500' :
+                  adjustedScore <= 7 ? 'bg-yellow-500' :
+                  adjustedScore <= 12 ? 'bg-orange-500' : 'bg-red-500'
+                }`}
+                style={{ width: `${Math.min(adjustedScore / 20 * 100, 100)}%` }}
+              />
             </div>
           </div>
         </div>
 
-        {/* Bônus Details */}
-        <div className="bg-muted/20 rounded-lg p-4">
-          <h4 className="font-semibold text-foreground mb-3 flex items-center gap-2">
-            <span className="text-blue-500">⚡</span>
-            Bônus de Coocorrência Aplicados
+        {/* Co-occurrence Bonuses */}
+        <div className="bg-gradient-card border border-border rounded-lg p-6 shadow-card mt-6">
+          <h4 className="font-semibold text-lg mb-4 flex items-center gap-2">
+            <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+            Bônus de Co-ocorrência ({cooccurrenceBonus.applied.length} aplicados)
           </h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {cooccurrenceBonus.rules.map((rule, index) => (
-              <div 
-                key={index}
-                className={`p-3 rounded-lg text-sm ${rule.condition ? 'bg-green-500/10 border border-green-500/20' : 'bg-muted/30'}`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className={`font-medium ${rule.condition ? 'text-green-600' : 'text-muted-foreground'}`}>
-                    {rule.condition ? '✓' : '✗'} +{rule.points} pontos
-                  </span>
+          
+          {cooccurrenceBonus.applied.length > 0 ? (
+            <div className="space-y-3">
+              {cooccurrenceBonus.applied.map((bonus, index) => (
+                <div key={index} className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+                  <span className="text-sm text-blue-800">{bonus}</span>
                 </div>
-                <div className={`text-xs ${rule.condition ? 'text-green-700' : 'text-muted-foreground'}`}>
-                  {rule.description}
-                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-sm">Nenhum bônus de co-ocorrência aplicado</p>
+          )}
+        </div>
+      </div>
+
+      {/* Manipulation Indicators Section */}
+      <div className="bg-gradient-card border border-border rounded-lg p-6 shadow-card">
+        <h3 className="text-xl font-bold text-foreground mb-4">Indícios de Manipulação Detectados</h3>
+        
+        {manipulationScore.indicators.length > 0 ? (
+          <div className="space-y-3">
+            {manipulationScore.indicators.map((indicator, index) => (
+              <div key={index} className="flex items-center gap-3 p-3 bg-red-50 rounded-lg">
+                <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                <span className="text-sm text-red-800">{indicator}</span>
               </div>
             ))}
+            <div className="mt-4 p-4 bg-yellow-50 rounded-lg">
+              <p className="text-sm text-yellow-800">
+                <strong>Total de pontos de suspeição:</strong> {manipulationScore.score}
+              </p>
+            </div>
           </div>
-        </div>
-
-        {/* Progress Bar Final */}
-        <div className="mt-6">
-          <div className="w-full bg-muted rounded-full h-4">
-            <div 
-              className={`h-4 rounded-full transition-all duration-1000 ${finalScore >= 90 ? 'bg-gradient-to-r from-green-400 to-green-600' : finalScore >= 70 ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' : 'bg-gradient-to-r from-red-400 to-red-600'}`}
-              style={{ width: `${Math.min((finalScore / 120) * 100, 100)}%` }}
-            />
-          </div>
-          <div className="flex justify-between text-xs text-muted-foreground mt-1">
-            <span>0</span>
-            <span>60</span>
-            <span>90</span>
-            <span>120</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Validation Matrix Score Section */}
-      <div className="bg-gradient-card border border-border rounded-lg p-6 shadow-card">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h3 className="text-xl font-semibold text-foreground">Matriz de Validação Forense</h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              Análise baseada em critérios de validação para evidências digitais
+        ) : (
+          <div className="p-4 bg-green-50 rounded-lg">
+            <p className="text-sm text-green-800">
+              Nenhum indício significativo de manipulação detectado.
             </p>
           </div>
-          <div className="text-right">
-            <div className={`text-3xl font-bold ${metadataScore >= 80 ? 'text-green-500' : metadataScore >= 60 ? 'text-yellow-500' : 'text-red-500'}`}>
-              {metadataScore}/100
-            </div>
-            <div className="text-sm text-muted-foreground">
-              Score Base da Matriz
-            </div>
-          </div>
-        </div>
-
-        <div className="w-full bg-muted rounded-full h-4 mb-6">
-          <div 
-            className={`h-4 rounded-full transition-all duration-500 ${metadataScore >= 80 ? 'bg-green-500' : metadataScore >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
-            style={{ width: `${metadataScore}%` }}
-          />
-        </div>
-
-        {/* Detailed validation categories */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {validationReport.categories.map((category) => (
-            <div key={category.name} className="bg-muted/30 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="font-medium text-foreground text-sm">{category.name}</h4>
-                <span className={`text-sm font-bold ${category.score === category.maxScore ? 'text-green-500' : category.score > category.maxScore * 0.6 ? 'text-yellow-500' : 'text-red-500'}`}>
-                  {category.score}/{category.maxScore}
-                </span>
-              </div>
-              <div className="w-full bg-muted-foreground/20 rounded-full h-2 mb-3">
-                <div 
-                  className={`h-2 rounded-full ${category.score === category.maxScore ? 'bg-green-500' : category.score > category.maxScore * 0.6 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                  style={{ width: `${(category.score / category.maxScore) * 100}%` }}
-                />
-              </div>
-              <div className="space-y-1">
-                {category.items.map((item, index) => (
-                  <div key={index} className="flex items-center justify-between text-xs">
-                    <span className={item.present ? 'text-foreground' : 'text-muted-foreground'}>
-                      {item.present ? '✓' : '✗'} {item.name}
-                    </span>
-                    <span className="text-muted-foreground">({item.points})</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        )}
       </div>
 
-      {/* Summary */}
+      {/* File Summary */}
       <div className="bg-gradient-card border border-border rounded-lg p-6 shadow-card">
-        <h3 className="text-lg font-semibold text-foreground mb-4">Resumo do Arquivo</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <h3 className="text-xl font-bold text-foreground mb-4">Resumo do Arquivo</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {Object.entries(summary).map(([key, value]) => (
-            <div key={key} className="bg-muted/30 rounded-lg p-3">
-              <div className="font-medium text-sm text-muted-foreground mb-1">{key}</div>
-              <div className="text-sm text-foreground">{value}</div>
+            <div key={key} className="flex justify-between items-center p-3 bg-muted/30 rounded-lg">
+              <span className="font-medium text-sm">{key}:</span>
+              <span className="text-sm text-muted-foreground">{value}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Metadata Sections */}
+      {/* Metadata Groups */}
       <div className="bg-gradient-card border border-border rounded-lg p-6 shadow-card">
-        <Accordion type="multiple" className="space-y-0">
-          {renderMetadataGroup(organizedMetadata.file, "Informações do Arquivo", <FileText className="h-5 w-5 text-primary" />)}
-          {renderMetadataGroup(organizedMetadata.exif, "Dados EXIF", <Camera className="h-5 w-5 text-primary" />)}
-          {renderMetadataGroup(organizedMetadata.gps, "Localização GPS", <MapPin className="h-5 w-5 text-primary" />)}
-          {renderMetadataGroup(organizedMetadata.icc, "Perfil de Cores", <Palette className="h-5 w-5 text-primary" />)}
-          {renderMetadataGroup(organizedMetadata.adobe, "Adobe/Photoshop", <ImageIcon className="h-5 w-5 text-primary" />)}
-          {renderMetadataGroup(organizedMetadata.composite, "Dados Compostos", <FileText className="h-5 w-5 text-primary" />)}
-          {renderMetadataGroup(organizedMetadata.other, "Outros Metadados", <FileText className="h-5 w-5 text-primary" />)}
-          
-          {/* Raw JSON */}
-          <AccordionItem value="raw-json" className="border border-border rounded-lg">
-            <AccordionTrigger className="flex items-center gap-3 px-4 py-3 hover:no-underline">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-primary/10 rounded-lg">
-                  <FileText className="h-5 w-5 text-primary" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-left">JSON Bruto</h3>
-                  <p className="text-sm text-muted-foreground text-left">Dados completos da API</p>
-                </div>
-              </div>
-            </AccordionTrigger>
-            <AccordionContent className="px-4 pb-4">
-              <div className="bg-muted/30 rounded-lg p-4">
-                <pre className="text-xs text-foreground overflow-auto max-h-96">
-                  {JSON.stringify(exifData, null, 2)}
-                </pre>
-              </div>
-            </AccordionContent>
-          </AccordionItem>
+        <h3 className="text-xl font-bold text-foreground mb-4">Metadados Detalhados</h3>
+        
+        <Accordion type="multiple" className="w-full">
+          {renderMetadataGroup(organizedMetadata.file, 'Informações do Arquivo', <FileText className="h-5 w-5 text-primary" />)}
+          {renderMetadataGroup(organizedMetadata.exif, 'Dados EXIF (Câmera)', <Camera className="h-5 w-5 text-primary" />)}
+          {renderMetadataGroup(organizedMetadata.gps, 'Localização GPS', <MapPin className="h-5 w-5 text-primary" />)}
+          {renderMetadataGroup(organizedMetadata.icc, 'Perfil de Cor ICC', <Palette className="h-5 w-5 text-primary" />)}
+          {renderMetadataGroup(organizedMetadata.adobe, 'Tags Adobe/XMP', <ImageIcon className="h-5 w-5 text-primary" />)}
+          {renderMetadataGroup(organizedMetadata.composite, 'Dados Compostos/JFIF', <FileText className="h-5 w-5 text-primary" />)}
+          {renderMetadataGroup(organizedMetadata.other, 'Outros Metadados', <FileText className="h-5 w-5 text-primary" />)}
         </Accordion>
       </div>
     </div>
