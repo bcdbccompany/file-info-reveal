@@ -75,124 +75,160 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     return groups;
   }, [exifData]);
 
-  // Manipulation Detection Score - calculates suspicion points based on forensic validation matrix
+  // Detectar se é arquivo original (com EXIF completo de câmera)
+  const isOriginalFile = useMemo(() => {
+    if (!exifData) return false;
+    
+    const hasCameraMake = exifData['EXIF:Make'] || exifData['IFD0:Make'];
+    const hasCameraModel = exifData['EXIF:Model'] || exifData['IFD0:Model'];
+    const hasISO = exifData['EXIF:ISO'] || exifData['EXIF:RecommendedExposureIndex'] || exifData['EXIF:ISOSpeedRatings'];
+    const hasExposure = exifData['EXIF:ExposureTime'] || exifData['EXIF:ShutterSpeedValue'];
+    const hasAperture = exifData['EXIF:FNumber'] || exifData['EXIF:ApertureValue'];
+    
+    // Considera original se tem pelo menos Make, Model e mais 2 parâmetros de câmera
+    const cameraFields = [hasISO, hasExposure, hasAperture].filter(Boolean).length;
+    return hasCameraMake && hasCameraModel && cameraFields >= 2;
+  }, [exifData]);
+
+  // Calcular score de manipulação baseado na tabela de validação completa
   const manipulationScore = useMemo(() => {
+    if (!exifData) return { score: 0, indicators: [], details: [], isProgressive: false, is444: false, hasHPAdobe: false };
+
     let score = 0;
-    const detectedIndicators: string[] = [];
+    const indicators: string[] = [];
+    const details: string[] = [];
+
+    // 1. EXIF ausente (peso 4) - Verificar campos essenciais de câmera
+    const hasMake = exifData['EXIF:Make'] || exifData['IFD0:Make'];
+    const hasModel = exifData['EXIF:Model'] || exifData['IFD0:Model'];
+    const hasISO = exifData['EXIF:ISO'] || exifData['EXIF:RecommendedExposureIndex'] || exifData['EXIF:ISOSpeedRatings'];
+    const hasCreateDate = exifData['EXIF:CreateDate'] || exifData['EXIF:DateTimeOriginal'];
     
-    // 1. File Size (1 point - Weak indicator)
-    // Check if file size is significantly larger than expected for its dimensions
-    const width = exifData['EXIF:ExifImageWidth'] || exifData['File:ImageWidth'] || exifData['EXIF:ImageWidth'];
-    const height = exifData['EXIF:ExifImageHeight'] || exifData['File:ImageHeight'] || exifData['EXIF:ImageHeight'];
-    const actualSize = fileMetadata.size_bytes;
-    
-    if (width && height && actualSize) {
-      // Calculate expected size: width × height × 3 (RGB) × compression factor (0.1-0.3 for JPEG)
-      const expectedSize = width * height * 0.2; // Conservative estimate for typical JPEG compression
-      if (actualSize > expectedSize * 1.5) { // 50% larger than expected indicates high quality/reprocessing
-        score += 1;
-        detectedIndicators.push('Tamanho de arquivo (aumento relevante)');
-      }
-    }
-    
-    // 2. Progressive DCT Encoding (3 points - Medium indicator)
-    const progressiveIndicators = [
-      exifData['JFIF:ProgressiveDCT'],
-      exifData['File:EncodingProcess']?.includes?.('Progressive'),
-      exifData['EXIF:ColorSpace'] === 'Uncalibrated' // Often appears with progressive
-    ];
-    if (progressiveIndicators.some(Boolean)) {
-      score += 3;
-      detectedIndicators.push('Codificação Progressive DCT');
-    }
-    
-    // 3. YCbCr 4:4:4 Color Subsampling (3 points - Medium indicator)
-    const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['File:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'];
-    if (subsampling === '1 1' || subsampling === '4:4:4' || 
-        (typeof subsampling === 'string' && subsampling.includes('4:4:4'))) {
-      score += 3;
-      detectedIndicators.push('Subamostragem de cor 4:4:4');
-    }
-    
-    // 4. ICC Profiles - HP/Adobe/Missing (3 points - Medium indicator)
-    const iccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC_Profile:ColorSpaceData'] || 
-                      exifData['ICC-header:DeviceManufacturer'] || exifData['ICC:DeviceManufacturer'];
-    if (iccProfile) {
-      if (iccProfile.includes('HP') || iccProfile.includes('Hewlett') || iccProfile === 'Hewlett-Packard') {
-        score += 3;
-        detectedIndicators.push('Perfil ICC HP');
-      } else if (iccProfile.includes('Adobe') || iccProfile.includes('Photoshop')) {
-        score += 3;
-        detectedIndicators.push('Perfil ICC Adobe/Photoshop');
-      }
-    } else if (!iccProfile && Object.keys(exifData).some(key => key.startsWith('ICC'))) {
-      score += 3;
-      detectedIndicators.push('Perfil ICC ausente/genérico');
-    }
-    
-    // 5. Missing EXIF Camera Data (4 points - Strong indicator)
-    const hasBasicCameraData = exifData['EXIF:Make'] && exifData['EXIF:Model'] && 
-                              (exifData['EXIF:ISO'] || exifData['EXIF:ISOSpeedRatings']);
-    if (!hasBasicCameraData) {
+    const missingEssentialExif = !hasMake || !hasModel || !hasISO || !hasCreateDate;
+    if (missingEssentialExif && !isOriginalFile) {
       score += 4;
-      detectedIndicators.push('EXIF de câmera ausente');
+      indicators.push('EXIF ausente');
+      details.push('EXIF ausente (+4): Campos essenciais de câmera ausentes');
     }
+
+    // 2. Software explícito (peso 4) - Detectar tags de software de edição
+    const softwareFields = [
+      exifData['EXIF:Software'],
+      exifData['EXIF:Creator'], 
+      exifData['XMP:CreatorTool'],
+      exifData['XMP:Software'],
+      exifData['IFD0:Software']
+    ].filter(Boolean);
     
-    // 6. Adobe/Photoshop Tags (3 points - Medium indicator)
-    const adobeTags = [
-      exifData['Photoshop:PhotoshopQuality'],
-      exifData['Photoshop:ProgressiveScans'],
-      exifData['Adobe:DCTEncodeVersion'],
-      exifData['Adobe:APP14Flags0'],
-      exifData['Adobe:ColorTransform'],
-      exifData['APP14:DCTEncodeVersion'],
-      exifData['XMP:CreatorTool']?.includes?.('Adobe'),
-      exifData['XMP:CreatorTool']?.includes?.('Photoshop')
-    ];
-    if (adobeTags.some(Boolean)) {
-      score += 3;
-      detectedIndicators.push('Tags Adobe/Photoshop');
+    const editingSoftware = softwareFields.some(software => {
+      const soft = software.toString().toLowerCase();
+      return soft.includes('photoshop') || soft.includes('gimp') || 
+             soft.includes('pixelmator') || soft.includes('canva') ||
+             soft.includes('lightroom') || soft.includes('editor') ||
+             soft.includes('paint') || soft.includes('sketch') ||
+             soft.includes('photopea') || soft.includes('pixlr') ||
+             soft.includes('fotor') || soft.includes('befunky');
+    });
+    
+    if (editingSoftware) {
+      score += 4;
+      indicators.push('Software explícito');
+      details.push('Software explícito (+4): Software de edição detectado nos metadados');
     }
+
+    // 3. XMP/Tags IA (peso 5) - Procurar tags específicas de IA
+    const xmpFields = Object.keys(exifData).filter(key => key.startsWith('XMP:'));
+    const hasAITags = xmpFields.some(field => {
+      const value = exifData[field]?.toString().toLowerCase() || '';
+      return value.includes('ai') || value.includes('artificial') || 
+             value.includes('generated') || value.includes('neural') ||
+             value.includes('midjourney') || value.includes('dalle') ||
+             value.includes('stable') || value.includes('diffusion') ||
+             value.includes('gpt') || value.includes('chatgpt');
+    });
     
-    // 7. Thumbnail alterada (1 point - Weak indicator)
-    const thumbnailLength = exifData['EXIF:ThumbnailLength'];
-    if (thumbnailLength && width && height) {
-      // Expected thumbnail size for given dimensions (rough estimate)
-      const expectedThumbnailSize = Math.min(160, width) * Math.min(120, height) * 0.1;
-      if (thumbnailLength > expectedThumbnailSize * 2) {
-        score += 1;
-        detectedIndicators.push('Thumbnail alterada');
-      }
+    if (hasAITags) {
+      score += 5;
+      indicators.push('XMP/Tags IA');
+      details.push('XMP/Tags IA (+5): Tags de inteligência artificial detectadas');
     }
+
+    // 4. C2PA/JUMBF Manifest (peso 5) - Detectar blocos criptográficos
+    const hasC2PA = exifData['C2PA:Manifest'] || 
+                   exifData['JUMBF:Manifest'] ||
+                   Object.keys(exifData).some(key => 
+                     key.includes('C2PA') || key.includes('JUMBF') || key.includes('Manifest')
+                   );
     
-    // 8. Explicit Software Field (4 points - Strong indicator)
-    const softwareField = exifData['EXIF:Software'] || exifData['XMP:CreatorTool'];
-    if (softwareField && !softwareField.match(/^[A-Z]+\s*[0-9.]+$/)) { // Not camera firmware pattern
-      const suspiciousSoftware = ['Photoshop', 'Photopea', 'Canva', 'Pixlr', 'Fotor', 'BeFunky', 'GIMP'];
-      if (suspiciousSoftware.some(sw => softwareField.includes(sw))) {
-        score += 4;
-        detectedIndicators.push(`Software explícito: ${softwareField}`);
-      }
+    if (hasC2PA) {
+      score += 5;
+      indicators.push('C2PA/JUMBF Manifest');
+      details.push('C2PA/JUMBF Manifest (+5): Manifest de autenticidade de conteúdo detectado');
     }
+
+    // 5. Progressive DCT (peso 3)
+    const progressive = exifData['JFIF:EncodingProcess'] || exifData['JPEG:EncodingProcess'] || 
+                       exifData['File:EncodingProcess'] || exifData['EXIF:EncodingProcess'] ||
+                       exifData['JFIF:ProgressiveDCT'];
     
-    // 8. Inconsistent Dates (3 points - Medium indicator) 
-    const dateOriginal = exifData['EXIF:DateTimeOriginal'];
-    const dateModify = exifData['EXIF:ModifyDate'] || exifData['XMP:ModifyDate'];
-    const dateCreate = exifData['EXIF:CreateDate'];
+    const isProgressive = progressive === 'Progressive DCT, Huffman coding' || 
+                         progressive === 'Progressive DCT' ||
+                         progressive?.toString().toLowerCase().includes('progressive') ||
+                         progressive === true;
     
-    if (dateOriginal && dateModify) {
-      const origDate = new Date(dateOriginal.replace(/:/g, '-', 2));
-      const modDate = new Date(dateModify.replace(/:/g, '-', 2));
-      const timeDiff = Math.abs(modDate.getTime() - origDate.getTime()) / (1000 * 60 * 60); // hours
-      
-      if (timeDiff > 24) { // More than 24 hours difference
-        score += 3;
-        detectedIndicators.push('Datas inconsistentes (>24h diferença)');
-      }
+    if (isProgressive) {
+      // Se é arquivo original, reduzir peso
+      const weight = isOriginalFile ? 1 : 3;
+      score += weight;
+      indicators.push('Progressive DCT');
+      details.push(`Progressive DCT (+${weight}): Codificação JPEG progressiva${isOriginalFile ? ' (reduzido por ser original)' : ''}`);
     }
+
+    // 6. Subsampling YCbCr 4:4:4 (peso 3)
+    const subsampling = exifData['JPEG:ColorComponents'] || exifData['EXIF:YCbCrSubSampling'] || 
+                       exifData['JFIF:YCbCrSubSampling'] || exifData['File:YCbCrSubSampling'];
     
-    return { score, indicators: detectedIndicators };
-  }, [exifData, fileMetadata]);
+    const is444 = subsampling === '4 4 4' || subsampling === 'YCbCr4:4:4' || 
+                  subsampling?.toString().includes('4:4:4') || subsampling === '1 1' || subsampling === 1;
+    
+    if (is444) {
+      const weight = isOriginalFile ? 1 : 3;
+      score += weight;
+      indicators.push('YCbCr 4:4:4');
+      details.push(`YCbCr 4:4:4 (+${weight}): Subsampling sem compressão${isOriginalFile ? ' (reduzido por ser original)' : ''}`);
+    }
+
+    // 7. ICC Profile HP/Adobe (peso 3)
+    const iccDescription = exifData['ICC_Profile:ProfileDescription'] || exifData['EXIF:ColorSpace'] || 
+                          exifData['ICC:ProfileDescription'] || exifData['ColorSpace'] ||
+                          exifData['ICC_Profile:DeviceManufacturer'] || exifData['ICC:DeviceManufacturer'];
+    
+    const hasHPAdobe = iccDescription?.toString().toLowerCase().includes('hp') || 
+                       iccDescription?.toString().toLowerCase().includes('adobe') ||
+                       iccDescription?.toString().toLowerCase().includes('hewlett') ||
+                       exifData['ICC_Profile:DeviceManufacturer']?.toString().toLowerCase().includes('adbe') ||
+                       exifData['ICC_Profile:DeviceManufacturer']?.toString().toLowerCase().includes('hp');
+    
+    if (hasHPAdobe) {
+      const weight = isOriginalFile ? 1 : 3;
+      score += weight;
+      indicators.push('ICC HP/Adobe');
+      details.push(`ICC HP/Adobe (+${weight}): Perfil ICC HP/Adobe${isOriginalFile ? ' (reduzido por ser original)' : ''}`);
+    }
+
+    return { 
+      score, 
+      indicators, 
+      details, 
+      isProgressive, 
+      is444, 
+      hasHPAdobe,
+      editingSoftware,
+      hasAITags,
+      hasC2PA,
+      missingEssentialExif: missingEssentialExif && !isOriginalFile
+    };
+  }, [exifData, isOriginalFile]);
 
   // Generate summary information
   const summary = useMemo(() => {
@@ -216,104 +252,93 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     return info;
   }, [exifData, fileMetadata]);
 
-  // Co-occurrence bonuses for manipulation patterns
+  // Co-occurrence bonuses for manipulation patterns - Tabela de Validação Completa
   const cooccurrenceBonus = useMemo(() => {
     let bonus = 0;
     const appliedBonuses: string[] = [];
     
-    // Get indicators for bonus calculations
-    const hasProgressive = exifData['JFIF:ProgressiveDCT'] || 
-                          exifData['File:EncodingProcess']?.includes?.('Progressive');
-    const has444Subsampling = (() => {
-      const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['File:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'];
-      return subsampling === '1 1' || subsampling === '4:4:4' || 
-             (typeof subsampling === 'string' && subsampling.includes('4:4:4'));
-    })();
-    const hasHPICC = (() => {
-      const iccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC_Profile:ColorSpaceData'] || 
-                        exifData['ICC-header:DeviceManufacturer'] || exifData['ICC:DeviceManufacturer'];
-      return iccProfile && (iccProfile.includes('HP') || iccProfile.includes('Hewlett') || iccProfile === 'Hewlett-Packard');
-    })();
-    const hasAdobeICC = (() => {
-      const iccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC_Profile:ColorSpaceData'];
-      return iccProfile && (iccProfile.includes('Adobe') || iccProfile.includes('Photoshop'));
-    })();
-    const hasAdobeTags = [
-      exifData['Photoshop:PhotoshopQuality'],
-      exifData['Photoshop:ProgressiveScans'], 
-      exifData['Adobe:DCTEncodeVersion'],
-      exifData['Adobe:APP14Flags0'],
-      exifData['Adobe:ColorTransform'],
-      exifData['APP14:DCTEncodeVersion'],
-      exifData['XMP:CreatorTool']?.includes?.('Adobe'),
-      exifData['XMP:CreatorTool']?.includes?.('Photoshop')
-    ].some(Boolean);
+    // Verificar datas inconsistentes
     const hasInconsistentDates = (() => {
       const dateOriginal = exifData['EXIF:DateTimeOriginal'];
-      const dateModify = exifData['EXIF:ModifyDate'] || exifData['XMP:ModifyDate'];
+      const dateModify = exifData['EXIF:ModifyDate'] || exifData['XMP:ModifyDate'] || exifData['File:FileModifyDate'];
+      const dateCreate = exifData['EXIF:CreateDate'];
+      
       if (dateOriginal && dateModify) {
-        const origDate = new Date(dateOriginal.replace(/:/g, '-', 2));
-        const modDate = new Date(dateModify.replace(/:/g, '-', 2));
-        const timeDiff = Math.abs(modDate.getTime() - origDate.getTime()) / (1000 * 60 * 60);
-        return timeDiff > 24;
+        try {
+          const origDate = new Date(dateOriginal.replace(/:/g, '-', 2));
+          const modDate = new Date(dateModify.replace(/:/g, '-', 2));
+          const timeDiff = Math.abs(modDate.getTime() - origDate.getTime()) / (1000 * 60 * 60); // hours
+          return timeDiff > 24; // Mais de 24 horas de diferença
+        } catch (error) {
+          return false;
+        }
       }
       return false;
     })();
+    
+    // Verificar redimensionamento
     const hasResizing = (() => {
-      // Check if resolution is non-standard or if there are resize indicators
-      const width = exifData['EXIF:ExifImageWidth'] || exifData['File:ImageWidth'];
-      const height = exifData['EXIF:ExifImageHeight'] || exifData['File:ImageHeight'];
+      const width = exifData['EXIF:ExifImageWidth'] || exifData['File:ImageWidth'] || exifData['EXIF:ImageWidth'];
+      const height = exifData['EXIF:ExifImageHeight'] || exifData['File:ImageHeight'] || exifData['EXIF:ImageHeight'];
+      
       if (width && height) {
-        // Common camera resolutions: 1920x1080, 4032x3024, etc.
-        const commonRatios = [16/9, 4/3, 3/2, 1/1];
-        const ratio = width / height;
-        const isStandardRatio = commonRatios.some(r => Math.abs(ratio - r) < 0.01);
-        return !isStandardRatio || (width % 16 !== 0) || (height % 16 !== 0);
+        // Verificar se não é uma resolução padrão de câmera
+        const commonResolutions = [
+          [1920, 1080], [3840, 2160], [4032, 3024], [6000, 4000], 
+          [5472, 3648], [4608, 3072], [3000, 2000], [2048, 1536]
+        ];
+        
+        const isCommonResolution = commonResolutions.some(([w, h]) => 
+          (width === w && height === h) || (width === h && height === w)
+        );
+        
+        // Verificar múltiplos de 16 (padrão de codificação)
+        const isStandardMultiple = (width % 16 === 0) && (height % 16 === 0);
+        
+        return !isCommonResolution || !isStandardMultiple;
       }
       return false;
     })();
-    const hasPreservedEXIF = exifData['EXIF:Make'] && exifData['EXIF:Model'];
-    const hasC2PA = Object.keys(exifData).some(key => 
-      key.includes('C2PA') || key.includes('JUMBF') || key.includes('Manifest'));
     
-    // Bonus 1: Progressive DCT + YCbCr 4:4:4 Subsampling (+2 points)
-    if (hasProgressive && has444Subsampling) {
+    // Bonus 1: Datas incoerentes + (Progressive/4:4:4 ou ICC+Adobe) (+2 pontos)
+    if (hasInconsistentDates && ((manipulationScore.isProgressive || manipulationScore.is444) || 
+        (manipulationScore.hasHPAdobe && manipulationScore.editingSoftware))) {
       bonus += 2;
-      appliedBonuses.push('Progressive DCT + Subamostragem 4:4:4 (+2)');
+      appliedBonuses.push('Datas incoerentes + padrão de edição (+2)');
     }
     
-    // Bonus 2: ICC HP + Progressive (+2 points)
-    if (hasHPICC && hasProgressive) {
-      bonus += 2;
-      appliedBonuses.push('ICC HP + Progressive (+2)');
-    }
-    
-    // Bonus 3: ICC Adobe + Adobe Tags (+2 points)  
-    if (hasAdobeICC && hasAdobeTags) {
-      bonus += 2;
-      appliedBonuses.push('ICC Adobe + Tags Adobe (+2)');
-    }
-    
-    // Bonus 4: Inconsistent dates + (Progressive/4:4:4 OR ICC+Adobe) (+2 points)
-    if (hasInconsistentDates && ((hasProgressive || has444Subsampling) || (hasAdobeICC && hasAdobeTags))) {
-      bonus += 2;
-      appliedBonuses.push('Datas inconsistentes + padrão de edição (+2)');
-    }
-    
-    // Bonus 5: Resizing + (Progressive OR 4:4:4) (+2 points)
-    if (hasResizing && (hasProgressive || has444Subsampling)) {
+    // Bonus 2: Redimensionamento + (Progressive ou 4:4:4) (+2 pontos)  
+    if (hasResizing && (manipulationScore.isProgressive || manipulationScore.is444)) {
       bonus += 2;
       appliedBonuses.push('Redimensionamento + reprocessamento (+2)');
     }
     
-    // Bonus 6: Preserved EXIF + C2PA AI (+5 points)
-    if (hasPreservedEXIF && hasC2PA) {
-      bonus += 5;
-      appliedBonuses.push('EXIF preservado + C2PA IA (+5)');
+    // Bonus 3: Progressive DCT + YCbCr 4:4:4 Subsampling (+2 pontos)
+    if (manipulationScore.isProgressive && manipulationScore.is444) {
+      bonus += 2;
+      appliedBonuses.push('Progressive DCT + Subamostragem 4:4:4 (+2)');
+    }
+    
+    // Bonus 4: ICC HP + Progressive (+2 pontos)
+    if (manipulationScore.hasHPAdobe && manipulationScore.isProgressive) {
+      bonus += 2;
+      appliedBonuses.push('ICC HP/Adobe + Progressive (+2)');
+    }
+    
+    // Bonus 5: Tags IA + EXIF preservado (+3 pontos)
+    if (manipulationScore.hasAITags && !manipulationScore.missingEssentialExif) {
+      bonus += 3;
+      appliedBonuses.push('Tags IA + EXIF preservado (+3)');
+    }
+    
+    // Bonus 6: C2PA + qualquer indicador de edição (+3 pontos)
+    if (manipulationScore.hasC2PA && (manipulationScore.editingSoftware || manipulationScore.isProgressive || manipulationScore.is444)) {
+      bonus += 3;
+      appliedBonuses.push('C2PA + indicador de edição (+3)');
     }
     
     return { total: bonus, applied: appliedBonuses };
-  }, [exifData]);
+  }, [exifData, manipulationScore]);
 
   // Calculate final suspicion score
   const finalScore = useMemo(() => {
@@ -337,12 +362,33 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
   // Apply digital transport limitation
   const adjustedScore = isDigitalTransport ? Math.min(finalScore, 7) : finalScore;
 
-  // Classification based on final score
+  // Classification based on final score - Tabela de Validação
   const classification = useMemo(() => {
-    if (adjustedScore <= 3) return { level: 'Baixo', description: 'Normal', color: 'text-green-600', bgColor: 'bg-green-50' };
-    if (adjustedScore <= 7) return { level: 'Moderado', description: 'Suspeita moderada', color: 'text-yellow-600', bgColor: 'bg-yellow-50' };
-    if (adjustedScore <= 12) return { level: 'Forte', description: 'Suspeito', color: 'text-orange-600', bgColor: 'bg-orange-50' };
-    return { level: 'Muito Forte', description: 'Provável fraude', color: 'text-red-600', bgColor: 'bg-red-50' };
+    // Classificação baseada na tabela oficial: 0-3, 4-7, 8-12, ≥13
+    if (adjustedScore <= 3) return { 
+      level: 'Baixo', 
+      description: 'Sem indícios de alteração', 
+      color: 'text-green-600', 
+      bgColor: 'bg-green-50' 
+    };
+    if (adjustedScore <= 7) return { 
+      level: 'Moderado', 
+      description: 'Indícios fracos de alteração', 
+      color: 'text-yellow-600', 
+      bgColor: 'bg-yellow-50' 
+    };
+    if (adjustedScore <= 12) return { 
+      level: 'Forte', 
+      description: 'Indícios fortes de alteração', 
+      color: 'text-orange-600', 
+      bgColor: 'bg-orange-50' 
+    };
+    return { 
+      level: 'Muito Forte', 
+      description: 'Evidências de alteração digital', 
+      color: 'text-red-600', 
+      bgColor: 'bg-red-50' 
+    };
   }, [adjustedScore]);
 
   const formatValue = (value: any): string => {
@@ -480,6 +526,17 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
               Nível de Suspeição: {classification.level}
             </div>
             <div className="text-muted-foreground mb-4">{classification.description}</div>
+            
+            {/* Informação sobre arquivo original */}
+            {isOriginalFile && (
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="text-sm text-blue-800 font-medium">📷 Arquivo Original de Câmera Detectado</div>
+                <div className="text-xs text-blue-600 mt-1">
+                  Pontuação reduzida para indicadores comuns em arquivos originais
+                </div>
+              </div>
+            )}
+            
             <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
               <div 
                 className={`h-full transition-all duration-300 ${
