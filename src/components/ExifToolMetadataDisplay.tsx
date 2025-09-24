@@ -75,6 +75,41 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     return groups;
   }, [exifData]);
 
+  // Calculate metadata score
+  const metadataScore = useMemo(() => {
+    let score = 0;
+    let maxScore = 100;
+
+    // Basic file info (20 points)
+    if (fileMetadata.file_name) score += 5;
+    if (fileMetadata.mime_type) score += 5;
+    if (fileMetadata.size_bytes) score += 5;
+    if (Object.keys(exifData).length > 0) score += 5;
+
+    // Camera information (30 points)
+    if (exifData['EXIF:Make']) score += 10;
+    if (exifData['EXIF:Model']) score += 10;
+    if (exifData['EXIF:DateTime'] || exifData['EXIF:DateTimeOriginal']) score += 10;
+
+    // Technical details (25 points)
+    if (exifData['EXIF:ExifImageWidth'] && exifData['EXIF:ExifImageHeight']) score += 8;
+    if (exifData['EXIF:ISO'] || exifData['EXIF:ISOSpeedRatings']) score += 5;
+    if (exifData['EXIF:FNumber'] || exifData['EXIF:ApertureValue']) score += 6;
+    if (exifData['EXIF:ExposureTime'] || exifData['EXIF:ShutterSpeedValue']) score += 6;
+
+    // GPS and location (15 points)
+    const hasGPS = Object.keys(exifData).some(key => key.toLowerCase().includes('gps'));
+    if (hasGPS) score += 15;
+
+    // Additional metadata richness (10 points)
+    const metadataCount = Object.keys(exifData).length;
+    if (metadataCount > 50) score += 10;
+    else if (metadataCount > 20) score += 7;
+    else if (metadataCount > 10) score += 4;
+
+    return Math.min(score, maxScore);
+  }, [exifData, fileMetadata]);
+
   // Generate summary information
   const summary = useMemo(() => {
     const info: Record<string, string> = {};
@@ -181,6 +216,29 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
             Baixar JSON
           </Button>
         </div>
+      </div>
+
+      {/* Score Section */}
+      <div className="bg-gradient-card border border-border rounded-lg p-6 shadow-card">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-foreground">Pontuação dos Metadados</h3>
+          <div className="flex items-center gap-2">
+            <div className={`text-2xl font-bold ${metadataScore >= 80 ? 'text-green-500' : metadataScore >= 60 ? 'text-yellow-500' : 'text-red-500'}`}>
+              {metadataScore}/100
+            </div>
+          </div>
+        </div>
+        <div className="w-full bg-muted rounded-full h-3 mb-4">
+          <div 
+            className={`h-3 rounded-full transition-all duration-500 ${metadataScore >= 80 ? 'bg-green-500' : metadataScore >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+            style={{ width: `${metadataScore}%` }}
+          />
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {metadataScore >= 80 ? 'Excelente! Arquivo rico em metadados.' : 
+           metadataScore >= 60 ? 'Bom nível de metadados disponíveis.' : 
+           'Poucos metadados encontrados no arquivo.'}
+        </p>
       </div>
 
       {/* Summary */}
