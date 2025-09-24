@@ -1,17 +1,17 @@
 import { useState } from 'react';
 import { FileSearch } from 'lucide-react';
 import FileUploadZone from '@/components/FileUploadZone';
-import MetadataDisplay from '@/components/MetadataDisplay';
+import ExifToolMetadataDisplay from '@/components/ExifToolMetadataDisplay';
 
 const Index = () => {
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [processedData, setProcessedData] = useState<any>(null);
 
-  const handleFileUpload = (file: File) => {
-    setUploadedFile(file);
+  const handleFileUpload = (data: any) => {
+    setProcessedData(data);
   };
 
   const handleRemoveFile = () => {
-    setUploadedFile(null);
+    setProcessedData(null);
   };
 
   return (
@@ -43,20 +43,20 @@ const Index = () => {
           <div className="w-full flex justify-center">
             <FileUploadZone
               onFileUpload={handleFileUpload}
-              uploadedFile={uploadedFile}
+              uploadedFile={processedData?.metadata?.file_name ? { name: processedData.metadata.file_name } as File : null}
               onRemoveFile={handleRemoveFile}
             />
           </div>
 
           {/* Results Section */}
-          {uploadedFile && (
+          {processedData && (
             <div className="w-full flex justify-center animate-in fade-in duration-500">
-              <MetadataDisplay file={uploadedFile} />
+              <ExifToolMetadataDisplay metadata={processedData} />
             </div>
           )}
 
           {/* Info Section (when no file is uploaded) */}
-          {!uploadedFile && (
+          {!processedData && (
             <div className="max-w-2xl text-center space-y-6 animate-in fade-in duration-300">
               <div className="space-y-4">
                 <h2 className="text-3xl font-bold text-foreground">

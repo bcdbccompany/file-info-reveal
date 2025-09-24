@@ -14,7 +14,110 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      file_metadata: {
+        Row: {
+          analysis_results: Json | null
+          bucket: string | null
+          created_at: string
+          exif_data: Json | null
+          exif_raw: Json | null
+          file_info: Json | null
+          file_name: string
+          file_path: string
+          id: string
+          iptc_data: Json | null
+          job_id: string | null
+          mime_type: string | null
+          size_bytes: number | null
+          updated_at: string
+          user_id: string | null
+          xmp_data: Json | null
+        }
+        Insert: {
+          analysis_results?: Json | null
+          bucket?: string | null
+          created_at?: string
+          exif_data?: Json | null
+          exif_raw?: Json | null
+          file_info?: Json | null
+          file_name: string
+          file_path: string
+          id?: string
+          iptc_data?: Json | null
+          job_id?: string | null
+          mime_type?: string | null
+          size_bytes?: number | null
+          updated_at?: string
+          user_id?: string | null
+          xmp_data?: Json | null
+        }
+        Update: {
+          analysis_results?: Json | null
+          bucket?: string | null
+          created_at?: string
+          exif_data?: Json | null
+          exif_raw?: Json | null
+          file_info?: Json | null
+          file_name?: string
+          file_path?: string
+          id?: string
+          iptc_data?: Json | null
+          job_id?: string | null
+          mime_type?: string | null
+          size_bytes?: number | null
+          updated_at?: string
+          user_id?: string | null
+          xmp_data?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "file_metadata_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "metadata_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      metadata_jobs: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          file_name: string
+          file_path: string
+          file_size: number
+          id: string
+          processed_at: string | null
+          status: string
+          user_id: string | null
+          webhook_url: string | null
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          file_name: string
+          file_path: string
+          file_size: number
+          id?: string
+          processed_at?: string | null
+          status?: string
+          user_id?: string | null
+          webhook_url?: string | null
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          file_name?: string
+          file_path?: string
+          file_size?: number
+          id?: string
+          processed_at?: string | null
+          status?: string
+          user_id?: string | null
+          webhook_url?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
