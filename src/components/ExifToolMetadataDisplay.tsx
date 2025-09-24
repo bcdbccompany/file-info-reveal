@@ -267,6 +267,19 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       details.push('ICC HP/Adobe (+3): Perfil ICC HP/Adobe');
     }
 
+    // 8. SceneType inconsistente (peso 2) - Detectar valor "Unknown" ou ausente (BeFunky/editores)
+    const sceneType = exifData['EXIF:SceneType'] || exifData['EXIF:SceneCaptureType'] || 
+                      exifData['IFD0:SceneType'] || exifData['IFD0:SceneCaptureType'];
+    
+    const hasInconsistentSceneType = sceneType === 'Unknown' || sceneType === 'unknown' || 
+                                     sceneType === 0 || sceneType === '0';
+    
+    if (hasInconsistentSceneType) {
+      score += 2;
+      indicators.push('SceneType inconsistente');
+      details.push(`SceneType inconsistente (+2): Valor "${sceneType}" típico de editores como BeFunky`);
+    }
+
     return { 
       score, 
       indicators, 
@@ -277,7 +290,8 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       editingSoftware,
       hasAITags,
       hasC2PA,
-      missingEssentialExif
+      missingEssentialExif,
+      hasInconsistentSceneType
     };
   }, [exifData, isOriginalFile]);
 
