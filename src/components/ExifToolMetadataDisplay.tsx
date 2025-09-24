@@ -246,6 +246,77 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     return info;
   }, [exifData, fileMetadata]);
 
+  // Calculate co-occurrence bonus
+  const cooccurrenceBonus = useMemo(() => {
+    let bonus = 0;
+    
+    // Bônus por coocorrências que aumentam a confiabilidade forense
+    const bonusRules = [
+      // Coocorrência Câmera + Data/Hora + Parâmetros Técnicos (Bônus: 15 pontos)
+      {
+        condition: exifData['EXIF:Make'] && exifData['EXIF:Model'] && 
+                   exifData['EXIF:DateTimeOriginal'] && 
+                   (exifData['EXIF:ISO'] || exifData['EXIF:FNumber'] || exifData['EXIF:ExposureTime']),
+        points: 15,
+        description: 'Tríade de autenticidade: Câmera + Data/Hora + Parâmetros técnicos'
+      },
+      
+      // Coocorrência GPS + Data/Hora (Bônus: 12 pontos)
+      {
+        condition: (exifData['GPS:GPSLatitude'] && exifData['GPS:GPSLongitude']) && 
+                   exifData['EXIF:DateTimeOriginal'],
+        points: 12,
+        description: 'Rastreabilidade espaço-temporal: GPS + Data/Hora'
+      },
+      
+      // Coocorrência Software + Dados técnicos (Bônus: 8 pontos)
+      {
+        condition: (exifData['EXIF:Software'] || exifData['XMP:CreatorTool']) && 
+                   exifData['EXIF:Make'] && exifData['EXIF:Model'],
+        points: 8,
+        description: 'Cadeia de processamento: Software + Dispositivo'
+      },
+      
+      // Coocorrência Múltiplas datas (Bônus: 6 pontos)
+      {
+        condition: exifData['EXIF:DateTimeOriginal'] && exifData['EXIF:DateTime'] && 
+                   exifData['EXIF:DateTimeDigitized'],
+        points: 6,
+        description: 'Cronologia completa: Múltiplas timestamps'
+      },
+      
+      // Coocorrência Parâmetros técnicos completos (Bônus: 5 pontos)
+      {
+        condition: (exifData['EXIF:ISO'] || exifData['EXIF:ISOSpeedRatings']) && 
+                   (exifData['EXIF:FNumber'] || exifData['EXIF:ApertureValue']) && 
+                   (exifData['EXIF:ExposureTime'] || exifData['EXIF:ShutterSpeedValue']),
+        points: 5,
+        description: 'Triângulo de exposição: ISO + Abertura + Tempo'
+      },
+      
+      // Coocorrência Resolução + Qualidade (Bônus: 4 pontos)
+      {
+        condition: (exifData['EXIF:ExifImageWidth'] && exifData['EXIF:ExifImageHeight']) && 
+                   (exifData['EXIF:ColorSpace'] || exifData['EXIF:WhiteBalance']),
+        points: 4,
+        description: 'Qualidade de imagem: Resolução + Configurações de cor'
+      }
+    ];
+    
+    bonusRules.forEach(rule => {
+      if (rule.condition) {
+        bonus += rule.points;
+      }
+    });
+    
+    return { total: bonus, rules: bonusRules };
+  }, [exifData]);
+
+  // Calculate final score
+  const finalScore = useMemo(() => {
+    return Math.min(metadataScore + cooccurrenceBonus.total, 120); // Máximo 120 (100 base + 20 bônus)
+  }, [metadataScore, cooccurrenceBonus.total]);
+
 
   const formatValue = (value: any): string => {
     if (value === null || value === undefined) return 'N/A';
@@ -332,6 +403,86 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
         </div>
       </div>
 
+      {/* Final Score Section */}
+      <div className="bg-gradient-card border border-border rounded-lg p-6 shadow-card">
+        <div className="text-center mb-6">
+          <h3 className="text-2xl font-bold text-foreground mb-2">Pontuação Final de Confiabilidade</h3>
+          <p className="text-muted-foreground">
+            Score base da matriz + bônus de coocorrência = pontuação final
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+          {/* Score Base */}
+          <div className="text-center p-4 bg-muted/30 rounded-lg">
+            <div className="text-3xl font-bold text-primary mb-2">{metadataScore}</div>
+            <div className="text-sm text-muted-foreground mb-1">Score Base</div>
+            <div className="text-xs text-muted-foreground">Matriz de Validação</div>
+          </div>
+
+          {/* Bônus de Coocorrência */}
+          <div className="text-center p-4 bg-muted/30 rounded-lg">
+            <div className="text-3xl font-bold text-blue-500 mb-2">+{cooccurrenceBonus.total}</div>
+            <div className="text-sm text-muted-foreground mb-1">Bônus Coocorrência</div>
+            <div className="text-xs text-muted-foreground">Correlações Encontradas</div>
+          </div>
+
+          {/* Pontuação Final */}
+          <div className="text-center p-4 bg-gradient-to-br from-primary/20 to-primary/10 rounded-lg border-2 border-primary/30">
+            <div className={`text-4xl font-bold mb-2 ${finalScore >= 90 ? 'text-green-500' : finalScore >= 70 ? 'text-yellow-500' : 'text-red-500'}`}>
+              {finalScore}/120
+            </div>
+            <div className="text-sm font-semibold text-foreground mb-1">PONTUAÇÃO FINAL</div>
+            <div className={`text-xs font-medium ${finalScore >= 90 ? 'text-green-500' : finalScore >= 70 ? 'text-yellow-500' : 'text-red-500'}`}>
+              {finalScore >= 90 ? 'ALTA CONFIABILIDADE' : 
+               finalScore >= 70 ? 'CONFIABILIDADE MÉDIA' : 
+               'BAIXA CONFIABILIDADE'}
+            </div>
+          </div>
+        </div>
+
+        {/* Bônus Details */}
+        <div className="bg-muted/20 rounded-lg p-4">
+          <h4 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+            <span className="text-blue-500">⚡</span>
+            Bônus de Coocorrência Aplicados
+          </h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {cooccurrenceBonus.rules.map((rule, index) => (
+              <div 
+                key={index}
+                className={`p-3 rounded-lg text-sm ${rule.condition ? 'bg-green-500/10 border border-green-500/20' : 'bg-muted/30'}`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className={`font-medium ${rule.condition ? 'text-green-600' : 'text-muted-foreground'}`}>
+                    {rule.condition ? '✓' : '✗'} +{rule.points} pontos
+                  </span>
+                </div>
+                <div className={`text-xs ${rule.condition ? 'text-green-700' : 'text-muted-foreground'}`}>
+                  {rule.description}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Progress Bar Final */}
+        <div className="mt-6">
+          <div className="w-full bg-muted rounded-full h-4">
+            <div 
+              className={`h-4 rounded-full transition-all duration-1000 ${finalScore >= 90 ? 'bg-gradient-to-r from-green-400 to-green-600' : finalScore >= 70 ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' : 'bg-gradient-to-r from-red-400 to-red-600'}`}
+              style={{ width: `${Math.min((finalScore / 120) * 100, 100)}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs text-muted-foreground mt-1">
+            <span>0</span>
+            <span>60</span>
+            <span>90</span>
+            <span>120</span>
+          </div>
+        </div>
+      </div>
+
       {/* Validation Matrix Score Section */}
       <div className="bg-gradient-card border border-border rounded-lg p-6 shadow-card">
         <div className="flex items-center justify-between mb-6">
@@ -346,9 +497,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
               {metadataScore}/100
             </div>
             <div className="text-sm text-muted-foreground">
-              {metadataScore >= 80 ? 'ALTA CONFIABILIDADE' : 
-               metadataScore >= 60 ? 'CONFIABILIDADE MÉDIA' : 
-               'BAIXA CONFIABILIDADE'}
+              Score Base da Matriz
             </div>
           </div>
         </div>
