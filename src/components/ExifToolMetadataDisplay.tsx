@@ -98,18 +98,14 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     const indicators: string[] = [];
     const details: string[] = [];
 
-    // 1. EXIF ausente (peso 4) - Verificar campos essenciais de câmera
+    // 1. EXIF ausente (peso 0) - Apenas condição booleana para outras regras
     const hasMake = exifData['EXIF:Make'] || exifData['IFD0:Make'];
     const hasModel = exifData['EXIF:Model'] || exifData['IFD0:Model'];
     const hasISO = exifData['EXIF:ISO'] || exifData['EXIF:RecommendedExposureIndex'] || exifData['EXIF:ISOSpeedRatings'];
     const hasCreateDate = exifData['EXIF:CreateDate'] || exifData['EXIF:DateTimeOriginal'];
     
     const missingEssentialExif = !hasMake || !hasModel || !hasISO || !hasCreateDate;
-    if (missingEssentialExif && !isOriginalFile) {
-      score += 4;
-      indicators.push('EXIF ausente');
-      details.push('EXIF ausente (+4): Campos essenciais de câmera ausentes');
-    }
+    // EXIF ausente não pontua mais - apenas usado como condição para outras regras
 
     // 2. Software explícito (peso 4) - Detectar tags de software de edição
     const softwareFields = [
@@ -177,11 +173,9 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
                          progressive === true;
     
     if (isProgressive) {
-      // Se é arquivo original, reduzir peso
-      const weight = isOriginalFile ? 1 : 3;
-      score += weight;
+      score += 3;
       indicators.push('Progressive DCT');
-      details.push(`Progressive DCT (+${weight}): Codificação JPEG progressiva${isOriginalFile ? ' (reduzido por ser original)' : ''}`);
+      details.push('Progressive DCT (+3): Codificação JPEG progressiva');
     }
 
     // 6. Subsampling YCbCr 4:4:4 (peso 3)
@@ -192,10 +186,9 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
                   subsampling?.toString().includes('4:4:4') || subsampling === '1 1' || subsampling === 1;
     
     if (is444) {
-      const weight = isOriginalFile ? 1 : 3;
-      score += weight;
+      score += 3;
       indicators.push('YCbCr 4:4:4');
-      details.push(`YCbCr 4:4:4 (+${weight}): Subsampling sem compressão${isOriginalFile ? ' (reduzido por ser original)' : ''}`);
+      details.push('YCbCr 4:4:4 (+3): Subsampling sem compressão');
     }
 
     // 7. ICC Profile HP/Adobe (peso 3)
@@ -210,10 +203,9 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
                        exifData['ICC_Profile:DeviceManufacturer']?.toString().toLowerCase().includes('hp');
     
     if (hasHPAdobe) {
-      const weight = isOriginalFile ? 1 : 3;
-      score += weight;
+      score += 3;
       indicators.push('ICC HP/Adobe');
-      details.push(`ICC HP/Adobe (+${weight}): Perfil ICC HP/Adobe${isOriginalFile ? ' (reduzido por ser original)' : ''}`);
+      details.push('ICC HP/Adobe (+3): Perfil ICC HP/Adobe');
     }
 
     return { 
@@ -226,7 +218,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       editingSoftware,
       hasAITags,
       hasC2PA,
-      missingEssentialExif: missingEssentialExif && !isOriginalFile
+      missingEssentialExif
     };
   }, [exifData, isOriginalFile]);
 
