@@ -116,8 +116,19 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       exifData['IFD0:Software']
     ].filter(Boolean);
     
+    // Debug: Log dos campos de software encontrados
+    console.log('Software fields encontrados:', softwareFields);
+    console.log('Todos os campos EXIF disponíveis que contêm "Software" ou "Creator":', 
+      Object.keys(exifData).filter(key => 
+        key.toLowerCase().includes('software') || 
+        key.toLowerCase().includes('creator') || 
+        key.toLowerCase().includes('tool')
+      ).map(key => `${key}: ${exifData[key]}`)
+    );
+    
     const editingSoftware = softwareFields.some(software => {
       const soft = software.toString().toLowerCase();
+      console.log('Verificando software:', soft);
       return soft.includes('photoshop') || soft.includes('gimp') || 
              soft.includes('pixelmator') || soft.includes('canva') ||
              soft.includes('lightroom') || soft.includes('editor') ||
