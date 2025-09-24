@@ -81,10 +81,18 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     const detectedIndicators: string[] = [];
     
     // 1. File Size (1 point - Weak indicator)
-    const expectedSize = fileMetadata.size_bytes;
-    if (expectedSize && expectedSize < 50000) { // Very small file size (< 50KB) could indicate compression
-      score += 1;
-      detectedIndicators.push('Tamanho de arquivo reduzido');
+    // Check if file size is significantly larger than expected for its dimensions
+    const width = exifData['EXIF:ExifImageWidth'] || exifData['File:ImageWidth'] || exifData['EXIF:ImageWidth'];
+    const height = exifData['EXIF:ExifImageHeight'] || exifData['File:ImageHeight'] || exifData['EXIF:ImageHeight'];
+    const actualSize = fileMetadata.size_bytes;
+    
+    if (width && height && actualSize) {
+      // Calculate expected size: width × height × 3 (RGB) × compression factor (0.1-0.3 for JPEG)
+      const expectedSize = width * height * 0.2; // Conservative estimate for typical JPEG compression
+      if (actualSize > expectedSize * 1.5) { // 50% larger than expected indicates high quality/reprocessing
+        score += 1;
+        detectedIndicators.push('Tamanho de arquivo (aumento relevante)');
+      }
     }
     
     // 2. Progressive DCT Encoding (3 points - Medium indicator)
@@ -99,7 +107,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     }
     
     // 3. YCbCr 4:4:4 Color Subsampling (3 points - Medium indicator)
-    const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'];
+    const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['File:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'];
     if (subsampling === '1 1' || subsampling === '4:4:4' || 
         (typeof subsampling === 'string' && subsampling.includes('4:4:4'))) {
       score += 3;
@@ -107,16 +115,17 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     }
     
     // 4. ICC Profiles - HP/Adobe/Missing (3 points - Medium indicator)
-    const iccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC_Profile:ColorSpaceData'];
+    const iccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC_Profile:ColorSpaceData'] || 
+                      exifData['ICC-header:DeviceManufacturer'] || exifData['ICC:DeviceManufacturer'];
     if (iccProfile) {
-      if (iccProfile.includes('HP') || iccProfile.includes('Hewlett')) {
+      if (iccProfile.includes('HP') || iccProfile.includes('Hewlett') || iccProfile === 'Hewlett-Packard') {
         score += 3;
-        detectedIndicators.push('Perfil ICC HP/Adobe');
+        detectedIndicators.push('Perfil ICC HP');
       } else if (iccProfile.includes('Adobe') || iccProfile.includes('Photoshop')) {
         score += 3;
         detectedIndicators.push('Perfil ICC Adobe/Photoshop');
       }
-    } else if (!iccProfile && Object.keys(exifData).some(key => key.startsWith('ICC_Profile:'))) {
+    } else if (!iccProfile && Object.keys(exifData).some(key => key.startsWith('ICC'))) {
       score += 3;
       detectedIndicators.push('Perfil ICC ausente/genérico');
     }
@@ -133,6 +142,9 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     const adobeTags = [
       exifData['Photoshop:PhotoshopQuality'],
       exifData['Photoshop:ProgressiveScans'],
+      exifData['Adobe:DCTEncodeVersion'],
+      exifData['Adobe:APP14Flags0'],
+      exifData['Adobe:ColorTransform'],
       exifData['APP14:DCTEncodeVersion'],
       exifData['XMP:CreatorTool']?.includes?.('Adobe'),
       exifData['XMP:CreatorTool']?.includes?.('Photoshop')
@@ -142,7 +154,18 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       detectedIndicators.push('Tags Adobe/Photoshop');
     }
     
-    // 7. Explicit Software Field (4 points - Strong indicator)
+    // 7. Thumbnail alterada (1 point - Weak indicator)
+    const thumbnailLength = exifData['EXIF:ThumbnailLength'];
+    if (thumbnailLength && width && height) {
+      // Expected thumbnail size for given dimensions (rough estimate)
+      const expectedThumbnailSize = Math.min(160, width) * Math.min(120, height) * 0.1;
+      if (thumbnailLength > expectedThumbnailSize * 2) {
+        score += 1;
+        detectedIndicators.push('Thumbnail alterada');
+      }
+    }
+    
+    // 8. Explicit Software Field (4 points - Strong indicator)
     const softwareField = exifData['EXIF:Software'] || exifData['XMP:CreatorTool'];
     if (softwareField && !softwareField.match(/^[A-Z]+\s*[0-9.]+$/)) { // Not camera firmware pattern
       const suspiciousSoftware = ['Photoshop', 'Photopea', 'Canva', 'Pixlr', 'Fotor', 'BeFunky', 'GIMP'];
@@ -202,18 +225,25 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     const hasProgressive = exifData['JFIF:ProgressiveDCT'] || 
                           exifData['File:EncodingProcess']?.includes?.('Progressive');
     const has444Subsampling = (() => {
-      const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'];
+      const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['File:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'];
       return subsampling === '1 1' || subsampling === '4:4:4' || 
              (typeof subsampling === 'string' && subsampling.includes('4:4:4'));
     })();
+    const hasHPICC = (() => {
+      const iccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC_Profile:ColorSpaceData'] || 
+                        exifData['ICC-header:DeviceManufacturer'] || exifData['ICC:DeviceManufacturer'];
+      return iccProfile && (iccProfile.includes('HP') || iccProfile.includes('Hewlett') || iccProfile === 'Hewlett-Packard');
+    })();
     const hasAdobeICC = (() => {
       const iccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC_Profile:ColorSpaceData'];
-      return iccProfile && (iccProfile.includes('HP') || iccProfile.includes('Adobe') || 
-                           iccProfile.includes('Photoshop') || iccProfile.includes('Hewlett'));
+      return iccProfile && (iccProfile.includes('Adobe') || iccProfile.includes('Photoshop'));
     })();
     const hasAdobeTags = [
       exifData['Photoshop:PhotoshopQuality'],
       exifData['Photoshop:ProgressiveScans'], 
+      exifData['Adobe:DCTEncodeVersion'],
+      exifData['Adobe:APP14Flags0'],
+      exifData['Adobe:ColorTransform'],
       exifData['APP14:DCTEncodeVersion'],
       exifData['XMP:CreatorTool']?.includes?.('Adobe'),
       exifData['XMP:CreatorTool']?.includes?.('Photoshop')
@@ -252,25 +282,31 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       appliedBonuses.push('Progressive DCT + Subamostragem 4:4:4 (+2)');
     }
     
-    // Bonus 2: ICC HP/Adobe + Adobe Tags (+2 points)  
-    if (hasAdobeICC && hasAdobeTags) {
+    // Bonus 2: ICC HP + Progressive (+2 points)
+    if (hasHPICC && hasProgressive) {
       bonus += 2;
-      appliedBonuses.push('ICC HP/Adobe + Tags Adobe (+2)');
+      appliedBonuses.push('ICC HP + Progressive (+2)');
     }
     
-    // Bonus 3: Inconsistent dates + (Progressive/4:4:4 OR ICC+Adobe) (+2 points)
+    // Bonus 3: ICC Adobe + Adobe Tags (+2 points)  
+    if (hasAdobeICC && hasAdobeTags) {
+      bonus += 2;
+      appliedBonuses.push('ICC Adobe + Tags Adobe (+2)');
+    }
+    
+    // Bonus 4: Inconsistent dates + (Progressive/4:4:4 OR ICC+Adobe) (+2 points)
     if (hasInconsistentDates && ((hasProgressive || has444Subsampling) || (hasAdobeICC && hasAdobeTags))) {
       bonus += 2;
       appliedBonuses.push('Datas inconsistentes + padrão de edição (+2)');
     }
     
-    // Bonus 4: Resizing + (Progressive OR 4:4:4) (+2 points)
+    // Bonus 5: Resizing + (Progressive OR 4:4:4) (+2 points)
     if (hasResizing && (hasProgressive || has444Subsampling)) {
       bonus += 2;
       appliedBonuses.push('Redimensionamento + reprocessamento (+2)');
     }
     
-    // Bonus 5: Preserved EXIF + C2PA AI (+5 points)
+    // Bonus 6: Preserved EXIF + C2PA AI (+5 points)
     if (hasPreservedEXIF && hasC2PA) {
       bonus += 5;
       appliedBonuses.push('EXIF preservado + C2PA IA (+5)');
