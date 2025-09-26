@@ -98,28 +98,27 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     const indicators: string[] = [];
     const details: string[] = [];
 
-    // 1. EXIF crítico ausente (peso 4) - Detecção de remoção intencional
+    // 1. EXIF crítico ausente (0 pontos - apenas flag) - Detecção para transporte digital
     const hasMake = exifData['EXIF:Make'] || exifData['IFD0:Make'];
     const hasModel = exifData['EXIF:Model'] || exifData['IFD0:Model'];
     const hasISO = exifData['EXIF:ISO'] || exifData['EXIF:RecommendedExposureIndex'] || exifData['EXIF:ISOSpeedRatings'];
     const hasCreateDate = exifData['EXIF:CreateDate'] || exifData['EXIF:DateTimeOriginal'];
     
-    const missingEssentialExif = !hasMake || !hasModel || !hasISO || !hasCreateDate;
+    const missingEssentialExif = !hasMake || !hasModel || !hasCreateDate;
     
-    // Detectar remoção intencional de EXIF (alta qualidade + ausência de metadados críticos)
+    // Detectar ausência de EXIF (sem pontuação - apenas flag para análise)
     const imageWidth = parseInt(exifData['EXIF:ImageWidth'] || exifData['File:ImageWidth'] || '0');
     const imageHeight = parseInt(exifData['EXIF:ImageHeight'] || exifData['File:ImageHeight'] || '0');
     const isHighQuality = imageWidth >= 800 && imageHeight >= 600; // Imagem de tamanho significativo
     
-    console.log('=== DEBUG AUSÊNCIAS INTENCIONAIS ===');
+    console.log('=== DEBUG AUSÊNCIAS (SEM PONTUAÇÃO) ===');
     console.log('Dimensões da imagem:', imageWidth, 'x', imageHeight, '- Alta qualidade:', isHighQuality);
     console.log('EXIF crítico - Make:', !!hasMake, 'Model:', !!hasModel, 'ISO:', !!hasISO, 'CreateDate:', !!hasCreateDate);
     
     if (missingEssentialExif && isHighQuality) {
-      score += 4;
       indicators.push('EXIF crítico ausente');
-      details.push('EXIF crítico ausente (+4): Ausência de Make, Model, ISO ou CreateDate em imagem de alta qualidade');
-      console.log('✓ EXIF crítico ausente: +4 pontos');
+      details.push('EXIF crítico ausente (0 pontos): Flag para análise de transporte digital');
+      console.log('✓ EXIF crítico ausente: Flag detectada (0 pontos)');
     }
 
     // 2. Software explícito (peso 4) - Detecção robusta de tags Adobe/Photoshop
@@ -206,39 +205,33 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       details.push(`Software explícito (+13): ${activeIndicators.join(', ')}`);
     }
 
-    // 2a. Software ausente (peso 2) - Quando esperado mas não está presente
-    if (!editingSoftware && isHighQuality) {
-      // Verificar se deveria ter software de edição mas não tem
-      const hasSoftware = exifData['EXIF:Software'] || exifData['IFD0:Software'] || 
-                         exifData['XMP:CreatorTool'] || exifData['EXIF:Creator'] || 
-                         exifData['XMP:Software'] || exifData['XMP:Tool'];
-      
-      if (!hasSoftware) {
-        score += 2;
-        indicators.push('Software ausente');
-        details.push('Software ausente (+2): Ausência completa de informações de software em imagem de alta qualidade');
-      }
+    // 2a. Software ausente (0 pontos - apenas flag) - Flag para análise
+    const hasSoftware = exifData['EXIF:Software'] || exifData['IFD0:Software'] || 
+                       exifData['XMP:CreatorTool'] || exifData['EXIF:Creator'] || 
+                       exifData['XMP:Software'] || exifData['XMP:Tool'];
+    
+    if (!editingSoftware && !hasSoftware && isHighQuality) {
+      indicators.push('Software ausente');
+      details.push('Software ausente (0 pontos): Flag para análise de transporte digital');
     }
 
-    // 2b. Datas EXIF ausentes (peso 3)
+    // 2b. Datas EXIF ausentes (0 pontos - apenas flag)
     if (!hasCreateDate && isHighQuality) {
-      score += 3;
       indicators.push('Datas EXIF ausentes');
-      details.push('Datas EXIF ausentes (+3): Ausência de CreateDate/DateTimeOriginal em imagem de alta qualidade');
+      details.push('Datas EXIF ausentes (0 pontos): Flag para análise de transporte digital');
     }
 
-    // 2c. ICC Profile ausente (peso 3) - Detectar ausência quando esperado
+    // 2c. ICC Profile ausente (0 pontos - apenas flag) - Flag para análise
     const hasIccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC:ProfileDescription'] ||
                          exifData['ICC_Profile:DeviceManufacturer'] || exifData['ICC:DeviceManufacturer'] ||
                          exifData['EXIF:ColorSpace'] || exifData['ColorSpace'];
     
     if (!hasIccProfile && isHighQuality) {
-      score += 3;
       indicators.push('ICC Profile ausente');
-      details.push('ICC Profile ausente (+3): Ausência de perfil ICC em imagem de alta qualidade');
+      details.push('ICC Profile ausente (0 pontos): Flag para análise de transporte digital');
     }
 
-    // 3. XMP/Tags IA (peso 5) - Procurar tags específicas de IA
+    // 3. XMP/Tags IA (0 pontos temporariamente) - Aguardando whitelist
     const xmpFields = Object.keys(exifData).filter(key => key.startsWith('XMP:'));
     const hasAITags = xmpFields.some(field => {
       const value = exifData[field]?.toString().toLowerCase() || '';
@@ -250,22 +243,35 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     });
     
     if (hasAITags) {
-      score += 5;
-      indicators.push('XMP/Tags IA');
-      details.push('XMP/Tags IA (+5): Tags de inteligência artificial detectadas');
+      indicators.push('XMP/Tags IA (não pontuado)');
+      details.push('XMP/Tags IA (0 pontos): Tags de IA detectadas (aguardando whitelist)');
     }
 
-    // 4. C2PA/JUMBF Manifest (peso 5) - Detectar blocos criptográficos
+    // 4. C2PA/JUMBF Manifest - Restritivo para geração/compósito apenas
     const hasC2PA = exifData['C2PA:Manifest'] || 
                    exifData['JUMBF:Manifest'] ||
                    Object.keys(exifData).some(key => 
                      key.includes('C2PA') || key.includes('JUMBF') || key.includes('Manifest')
                    );
     
+    // Verificar se declara geração/compósito/sintético (implementação futura - por ora informativo)
+    const c2paContent = Object.keys(exifData)
+      .filter(key => key.includes('C2PA') || key.includes('JUMBF'))
+      .map(key => String(exifData[key]).toLowerCase())
+      .join(' ');
+    
+    const isGenerative = c2paContent.includes('generated') || c2paContent.includes('composite') || 
+                        c2paContent.includes('synthetic') || c2paContent.includes('ai');
+    
     if (hasC2PA) {
-      score += 5;
-      indicators.push('C2PA/JUMBF Manifest');
-      details.push('C2PA/JUMBF Manifest (+5): Manifest de autenticidade de conteúdo detectado');
+      if (isGenerative) {
+        score += 5;
+        indicators.push('C2PA Geração/Compósito');
+        details.push('C2PA Geração/Compósito (+5): Manifest indica conteúdo gerado/composto');
+      } else {
+        indicators.push('C2PA Presente');
+        details.push('C2PA Presente (0 pontos): Assinatura de conteúdo detectada');
+      }
     }
 
     // 5. Progressive DCT (peso 3)
@@ -543,7 +549,8 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
                          exifData['Composite:YCbCrSubSampling'] ||
                          exifData['JFIF:YCbCrSubSampling'] ||
                          exifData['File:YCbCrSubSampling'];
-    const result = ycbcrSampling === '2 1' || ycbcrSampling === '2, 1' || ycbcrSampling === '2 2';
+    // Aceitar APENAS "2 2" para 4:2:0 - Rejeitar "2 1" (que é 4:2:2)
+    const result = ycbcrSampling === '2 2' || ycbcrSampling === '2, 2';
     
     console.log('🔍 Digital Transport Check - 4:2:0 Subsampling:', result, 'Value:', ycbcrSampling);
     
@@ -798,7 +805,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
             <div className="text-xs text-muted-foreground">Suspeição de Manipulação</div>
             {isDigitalTransport && (
               <div className="text-xs text-yellow-600 mt-1">
-                *Transporte digital detectado (ausência de EXIF crítico, subamostragem 4:2:0, ausência de software, ICC neutro, sem indicadores de edição intencional). Severidade limitada a Moderado.
+                *Transporte digital detectado (sem EXIF crítico, 4:2:0, sem software, ICC neutro). Severidade limitada a Moderado.
               </div>
             )}
           </div>
@@ -812,12 +819,12 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
             </div>
             <div className="text-muted-foreground mb-4">{classification.description}</div>
             
-            {/* Informação sobre arquivo original */}
+            {/* Informação sobre arquivo original - apenas informativo */}
             {isOriginalFile && (
               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="text-sm text-blue-800 font-medium">📷 Arquivo Original de Câmera Detectado</div>
+                <div className="text-sm text-blue-800 font-medium">📷 Arquivo Original de Câmera (Informativo)</div>
                 <div className="text-xs text-blue-600 mt-1">
-                  Pontuação reduzida para indicadores comuns em arquivos originais
+                  EXIF completo de câmera detectado - apenas para contexto
                 </div>
               </div>
             )}
@@ -862,12 +869,33 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
         
         {manipulationScore.indicators.length > 0 ? (
           <div className="space-y-3">
-            {manipulationScore.indicators.map((indicator, index) => (
-              <div key={index} className="flex items-center gap-3 p-3 bg-red-50 rounded-lg">
-                <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                <span className="text-sm text-red-800">{indicator}</span>
-              </div>
-            ))}
+            {manipulationScore.indicators.map((indicator, index) => {
+              // Special styling for C2PA Presente (informational seal)
+              const isC2PAPresent = indicator === 'C2PA Presente';
+              const isNonScoring = indicator.includes('(não pontuado)') || indicator.includes('(0 pontos)');
+              
+              return (
+                <div 
+                  key={index} 
+                  className={`flex items-center gap-3 p-3 rounded-lg ${
+                    isC2PAPresent ? 'bg-blue-50' : 
+                    isNonScoring ? 'bg-gray-50' : 'bg-red-50'
+                  }`}
+                >
+                  <div className={`w-2 h-2 rounded-full ${
+                    isC2PAPresent ? 'bg-blue-500' : 
+                    isNonScoring ? 'bg-gray-500' : 'bg-red-500'
+                  }`}></div>
+                  <span className={`text-sm ${
+                    isC2PAPresent ? 'text-blue-800' : 
+                    isNonScoring ? 'text-gray-800' : 'text-red-800'
+                  }`}>
+                    {indicator}
+                    {isC2PAPresent && ' 🛡️'}
+                  </span>
+                </div>
+              );
+            })}
             <div className="mt-4 p-4 bg-yellow-50 rounded-lg">
               <p className="text-sm text-yellow-800">
                 <strong>Total de pontos de suspeição:</strong> {manipulationScore.score}
