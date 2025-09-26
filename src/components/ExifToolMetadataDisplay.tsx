@@ -418,19 +418,99 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     return Math.min(manipulationScore.score + cooccurrenceBonus.total, 50); // Maximum reasonable suspicion score
   }, [manipulationScore.score, cooccurrenceBonus.total]);
 
+  // Helper functions for digital transport detection
+  const checkCriticalExifMissing = useMemo(() => {
+    const hasMakeModel = exifData['EXIF:Make'] && exifData['EXIF:Model'];
+    const hasOriginalDate = exifData['EXIF:DateTimeOriginal'] || exifData['EXIF:CreateDate'];
+    return !hasMakeModel && !hasOriginalDate;
+  }, [exifData]);
+
+  const check420Subsampling = useMemo(() => {
+    const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'] || exifData['File:YCbCrSubSampling'];
+    return subsampling === '2 2' || subsampling === '4:2:0' || 
+           (typeof subsampling === 'string' && subsampling.includes('4:2:0'));
+  }, [exifData]);
+
+  const checkNoEditorMarks = useMemo(() => {
+    const editorIndicators = [
+      'EXIF:Software',
+      'XMP:CreatorTool', 
+      'APP14:Adobe',
+      'EXIF:PhotoshopQuality',
+      'XMP:PhotoshopVersion',
+      'EXIF:ColorSpace', // Can indicate processing
+      'XMP-photoshop:History'
+    ];
+    
+    return !editorIndicators.some(indicator => exifData[indicator]);
+  }, [exifData]);
+
+  const checkNeutralICC = useMemo(() => {
+    const iccIndicators = [
+      'ICC_Profile:ProfileDescription',
+      'ICC-header:ProfileDescription',
+      'ICC_Profile:ProfileCMMType',
+      'ICC-header:ProfileCMMType'
+    ];
+    
+    const problematicProfiles = ['Adobe', 'HP', 'ProPhoto', 'ROMM', 'Adobe RGB'];
+    
+    return !iccIndicators.some(indicator => {
+      const value = String(exifData[indicator] || '').toLowerCase();
+      return problematicProfiles.some(profile => value.includes(profile.toLowerCase()));
+    });
+  }, [exifData]);
+
+  // Optional reinforcements for logging
+  const optionalReinforcements = useMemo(() => {
+    const longEdge = Math.max(
+      parseInt(exifData['File:ImageWidth'] || '0'),
+      parseInt(exifData['File:ImageHeight'] || '0')
+    );
+    const isSmallResolution = longEdge <= 2048;
+    
+    const encodingProcess = exifData['File:EncodingProcess'];
+    const isBaselineDCT = encodingProcess === 'Baseline DCT' || encodingProcess === 'Progressive DCT, Huffman coding';
+    
+    // Calculate bits per pixel (rough estimate)
+    const width = parseInt(exifData['File:ImageWidth'] || '0');
+    const height = parseInt(exifData['File:ImageHeight'] || '0');
+    const fileSize = fileMetadata.size_bytes || 0;
+    const bpp = (width && height && fileSize) ? (fileSize * 8) / (width * height) : 0;
+    const isLowBpp = bpp > 0 && bpp < 1; // Less than 1 bit per pixel indicates high compression
+    
+    return {
+      smallResolution: isSmallResolution,
+      baselineDCT: isBaselineDCT,
+      lowBpp: isLowBpp,
+      details: {
+        longEdge,
+        encodingProcess,
+        bpp: bpp.toFixed(2)
+      }
+    };
+  }, [exifData, fileMetadata]);
+
   // Determine digital transport pattern
   const isDigitalTransport = useMemo(() => {
-    const hasNoEXIF = !(exifData['EXIF:Make'] && exifData['EXIF:Model']);
-    const hasReduction = fileMetadata.size_bytes && fileMetadata.size_bytes < 200000; // < 200KB
-    const has420Subsampling = (() => {
-      const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'];
-      return subsampling === '2 2' || subsampling === '4:2:0' || 
-             (typeof subsampling === 'string' && subsampling.includes('4:2:0'));
-    })();
-    const hasNoSoftware = !exifData['EXIF:Software'] && !exifData['XMP:CreatorTool'];
+    const criteria = {
+      criticalExifMissing: checkCriticalExifMissing,
+      has420Subsampling: check420Subsampling,
+      noEditorMarks: checkNoEditorMarks,
+      neutralICC: checkNeutralICC
+    };
     
-    return hasNoEXIF && hasReduction && has420Subsampling && hasNoSoftware;
-  }, [exifData, fileMetadata]);
+    const allCriteriaMet = Object.values(criteria).every(Boolean);
+    
+    // Debug logging
+    console.log('Digital Transport Detection:', {
+      criteria,
+      optionalReinforcements,
+      allCriteriaMet
+    });
+    
+    return allCriteriaMet;
+  }, [checkCriticalExifMissing, check420Subsampling, checkNoEditorMarks, checkNeutralICC, optionalReinforcements]);
 
   // Apply digital transport limitation
   const adjustedScore = isDigitalTransport ? Math.min(finalScore, 7) : finalScore;
@@ -587,7 +667,9 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
             <div className="text-sm text-muted-foreground mb-1">Pontuação Final</div>
             <div className="text-xs text-muted-foreground">Suspeição de Manipulação</div>
             {isDigitalTransport && (
-              <div className="text-xs text-yellow-600 mt-1">*Limitado por padrão de transporte digital</div>
+              <div className="text-xs text-yellow-600 mt-1">
+                *Transporte digital detectado (sem EXIF crítico, 4:2:0, sem software, ICC neutro). Severidade limitada a Moderado.
+              </div>
             )}
           </div>
         </div>
