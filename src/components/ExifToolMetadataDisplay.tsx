@@ -121,88 +121,44 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       console.log('✓ EXIF crítico ausente: Flag detectada (0 pontos)');
     }
 
-    // 2. Software explícito (peso 4) - Detecção robusta de tags Adobe/Photoshop
-    const allExifFields = Object.keys(exifData);
-    const allExifValues = Object.values(exifData).map(v => String(v).toLowerCase());
-    const allExifText = allExifFields.join(' ').toLowerCase() + ' ' + allExifValues.join(' ');
+  // 2. Software explícito (+13) - Lista positiva apenas em EXIF:Software/IFD0:Software/XMP:CreatorTool
+    const softwareFields = [
+      exifData['EXIF:Software'], 
+      exifData['IFD0:Software'], 
+      exifData['XMP:CreatorTool']
+    ].filter(Boolean);
     
-    // Debug: Log detalhado para Adobe/Photoshop
-    console.log('=== DEBUG ADOBE/PHOTOSHOP ===');
-    
-    const adobeFields = allExifFields.filter(key => {
-      const keyLower = key.toLowerCase();
-      const valueLower = String(exifData[key]).toLowerCase();
-      return keyLower.includes('adobe') || keyLower.includes('photoshop') || keyLower.includes('app14') ||
-             valueLower.includes('adobe') || valueLower.includes('photoshop');
+    console.log('=== DEBUG SOFTWARE EXPLÍCITO ===');
+    console.log('Campos de software encontrados:', {
+      'EXIF:Software': exifData['EXIF:Software'],
+      'IFD0:Software': exifData['IFD0:Software'], 
+      'XMP:CreatorTool': exifData['XMP:CreatorTool']
     });
     
-    console.log('Campos que contêm Adobe/Photoshop/APP14:', 
-      adobeFields.map(key => `${key}: ${exifData[key]}`)
-    );
-    
-    // Verificações específicas para debugging
-    console.log('ICC-header:ProfileCreator:', exifData['ICC-header:ProfileCreator']);
-    console.log('Campos APP14:', allExifFields.filter(key => key.toLowerCase().includes('app14')));
-    console.log('Campos que começam com Adobe:', allExifFields.filter(key => key.startsWith('Adobe:')));
-    
-    // Busca robusta por indicadores Adobe/Photoshop
-    const adobeIndicators = [
-      // Tags diretas Adobe/Photoshop em qualquer campo
-      allExifText.includes('photoshop'),
-      allExifText.includes('adobe'),
-      
-      // APP14 e flags Adobe específicos
-      allExifFields.some(key => key.toLowerCase().includes('app14')),
-      exifData['APP14:ColorTransform'] !== undefined,
-      exifData['APP14:DCTEncodeVersion'] !== undefined,
-      exifData['Adobe:DCTEncodeVersion'] !== undefined,
-      
-      // Campos Adobe específicos por prefixo
-      allExifFields.some(key => key.startsWith('Adobe:')),
-      allExifFields.some(key => key.startsWith('Photoshop:')),
-      
-      // Software de edição nos campos tradicionais
-      ['EXIF:Software', 'IFD0:Software', 'XMP:CreatorTool', 'EXIF:Creator', 'XMP:Software'].some(field => {
-        const soft = String(exifData[field] || '').toLowerCase();
-        return soft.includes('photoshop') || soft.includes('lightroom') || soft.includes('adobe') ||
-               soft.includes('gimp') || soft.includes('pixelmator') || soft.includes('canva') ||
-               soft.includes('editor') || soft.includes('paint') || soft.includes('sketch');
-      }),
-      
-      // ICC Profile HP/Adobe (indicador adicional)
-      String(exifData['ICC-header:ProfileCreator'] || '').toLowerCase().includes('hewlett-packard') ||
-      String(exifData['ICC_Profile:ProfileDescription'] || '').toLowerCase().includes('adobe'),
-      
-      // Outros padrões técnicos Adobe
-      exifData['JFIF:YCbCrSubSampling'] === '4 4 4' && allExifText.includes('adobe')
+    // Lista positiva de editores (case-insensitive)
+    const knownEditors = [
+      'photoshop', 'lightroom', 'adobe', 'gimp', 'pixelmator', 'canva', 
+      'fotor', 'befunky', 'paint', 'sketch', 'affinity', 'corel', 'paintshop'
     ];
     
-    const activeIndicators = adobeIndicators.map((indicator, index) => {
-      const labels = [
-        'Photoshop no texto',
-        'Adobe no texto', 
-        'Campos APP14',
-        'APP14:ColorTransform',
-        'APP14:DCTEncodeVersion',
-        'Adobe:DCTEncodeVersion',
-        'Prefixo Adobe:',
-        'Prefixo Photoshop:',
-        'Software de edição',
-        'ICC HP/Adobe',
-        'YCbCr 4:4:4 + Adobe'
-      ];
-      return indicator ? labels[index] : null;
-    }).filter(Boolean);
+    const editingSoftware = softwareFields.some(field => {
+      if (!field) return false;
+      const fieldLower = String(field).toLowerCase();
+      return knownEditors.some(editor => fieldLower.includes(editor));
+    });
     
-    console.log('Indicadores Adobe encontrados:', activeIndicators);
+    const detectedEditor = softwareFields.find(field => {
+      if (!field) return false;
+      const fieldLower = String(field).toLowerCase();
+      return knownEditors.some(editor => fieldLower.includes(editor));
+    });
     
-    const editingSoftware = adobeIndicators.some(indicator => indicator);
-    console.log('editingSoftware (Adobe/Photoshop):', editingSoftware);
+    console.log('Software de edição detectado:', editingSoftware, 'Valor:', detectedEditor);
     
     if (editingSoftware) {
       score += 13;
       indicators.push('Software explícito');
-      details.push(`Software explícito (+13): ${activeIndicators.join(', ')}`);
+      details.push(`Software explícito (+13): ${detectedEditor}`);
     }
 
     // 2a. Software ausente (0 pontos - apenas flag) - Flag para análise
@@ -270,7 +226,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
         details.push('C2PA Geração/Compósito (+5): Manifest indica conteúdo gerado/composto');
       } else {
         indicators.push('C2PA Presente');
-        details.push('C2PA Presente (0 pontos): Assinatura de conteúdo detectada');
+        details.push('C2PA Presente (0 pontos): Assinatura de conteúdo (C2PA) detectada');
       }
     }
 
@@ -290,7 +246,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       details.push('Progressive DCT (+3): Codificação JPEG progressiva');
     }
 
-    // 6. Subsampling YCbCr 4:4:4 (peso 3)
+    // 6. Subsampling YCbCr 4:4:4 (peso 3) 
     const subsampling = exifData['JPEG:ColorComponents'] || exifData['EXIF:YCbCrSubSampling'] || 
                        exifData['JFIF:YCbCrSubSampling'] || exifData['File:YCbCrSubSampling'];
     
@@ -303,23 +259,38 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       details.push('YCbCr 4:4:4 (+3): Subsampling sem compressão');
     }
 
-    // 7. ICC Profile HP/Adobe (peso 3) - Apenas quando perfil específico está presente
+    // 6a. APP14 Adobe (peso 3)
+    const hasAPP14 = exifData['APP14:ColorTransform'] !== undefined || 
+                     exifData['APP14:DCTEncodeVersion'] !== undefined ||
+                     Object.keys(exifData).some(key => key.toLowerCase().includes('app14'));
+    
+    if (hasAPP14) {
+      score += 3;
+      indicators.push('APP14 Adobe');
+      details.push('APP14 Adobe (+3): Marcador técnico Adobe presente');
+    }
+
+    // 7. ICC Profile específico (peso 3) - HP/Adobe/ProPhoto/ROMM/Adobe RGB
     const iccDescription = exifData['ICC_Profile:ProfileDescription'] || exifData['EXIF:ColorSpace'] || 
                           exifData['ICC:ProfileDescription'] || exifData['ColorSpace'] ||
-                          exifData['ICC_Profile:DeviceManufacturer'] || exifData['ICC:DeviceManufacturer'];
+                          exifData['ICC_Profile:DeviceManufacturer'] || exifData['ICC:DeviceManufacturer'] ||
+                          exifData['ICC-header:ProfileCreator'];
     
-    const hasHPAdobe = iccDescription && (
-                       iccDescription.toString().toLowerCase().includes('hp') || 
+    const hasSpecificICC = iccDescription && (
                        iccDescription.toString().toLowerCase().includes('adobe') ||
                        iccDescription.toString().toLowerCase().includes('hewlett') ||
+                       iccDescription.toString().toLowerCase().includes('hp') ||
+                       iccDescription.toString().toLowerCase().includes('prophoto') ||
+                       iccDescription.toString().toLowerCase().includes('romm') ||
+                       iccDescription.toString().toLowerCase().includes('adobe rgb') ||
                        exifData['ICC_Profile:DeviceManufacturer']?.toString().toLowerCase().includes('adbe') ||
                        exifData['ICC_Profile:DeviceManufacturer']?.toString().toLowerCase().includes('hp')
                       );
     
-    if (hasHPAdobe) {
+    if (hasSpecificICC) {
       score += 3;
-      indicators.push('ICC HP/Adobe');
-      details.push('ICC HP/Adobe (+3): Perfil ICC específico HP/Adobe presente');
+      indicators.push('ICC específico');
+      details.push('ICC específico (+3): Perfil ICC Adobe/HP/ProPhoto/ROMM presente');
     }
 
     // 8. SceneType inconsistente (peso 2) - Detectar valor "Unknown" ou ausente (BeFunky/editores)
@@ -349,12 +320,13 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       details, 
       isProgressive, 
       is444, 
-      hasHPAdobe,
+      hasSpecificICC,
       editingSoftware,
       hasAITags,
       hasC2PA,
       missingEssentialExif,
-      hasInconsistentSceneType
+      hasInconsistentSceneType,
+      hasAPP14
     };
   }, [exifData, isOriginalFile]);
 
@@ -380,90 +352,30 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     return info;
   }, [exifData, fileMetadata]);
 
-  // Co-occurrence bonuses for manipulation patterns - Tabela de Validação Completa
+  // Co-occurrence bonuses - Apenas 2 bônus globais
   const cooccurrenceBonus = useMemo(() => {
     let bonus = 0;
     const appliedBonuses: string[] = [];
     
-    // Verificar datas inconsistentes
-    const hasInconsistentDates = (() => {
-      const dateOriginal = exifData['EXIF:DateTimeOriginal'];
-      const dateModify = exifData['EXIF:ModifyDate'] || exifData['XMP:ModifyDate'] || exifData['File:FileModifyDate'];
-      const dateCreate = exifData['EXIF:CreateDate'];
-      
-      if (dateOriginal && dateModify) {
-        try {
-          const origDate = new Date(dateOriginal.replace(/:/g, '-', 2));
-          const modDate = new Date(dateModify.replace(/:/g, '-', 2));
-          const timeDiff = Math.abs(modDate.getTime() - origDate.getTime()) / (1000 * 60 * 60); // hours
-          return timeDiff > 24; // Mais de 24 horas de diferença
-        } catch (error) {
-          return false;
-        }
-      }
-      return false;
-    })();
+    console.log('=== DEBUG BÔNUS DE CO-OCORRÊNCIA ===');
+    console.log('Progressive:', manipulationScore.isProgressive, '4:4:4:', manipulationScore.is444);
+    console.log('ICC específico:', manipulationScore.hasSpecificICC, 'Software explícito:', manipulationScore.editingSoftware);
     
-    // Verificar redimensionamento
-    const hasResizing = (() => {
-      const width = exifData['EXIF:ExifImageWidth'] || exifData['File:ImageWidth'] || exifData['EXIF:ImageWidth'];
-      const height = exifData['EXIF:ExifImageHeight'] || exifData['File:ImageHeight'] || exifData['EXIF:ImageHeight'];
-      
-      if (width && height) {
-        // Verificar se não é uma resolução padrão de câmera
-        const commonResolutions = [
-          [1920, 1080], [3840, 2160], [4032, 3024], [6000, 4000], 
-          [5472, 3648], [4608, 3072], [3000, 2000], [2048, 1536]
-        ];
-        
-        const isCommonResolution = commonResolutions.some(([w, h]) => 
-          (width === w && height === h) || (width === h && height === w)
-        );
-        
-        // Verificar múltiplos de 16 (padrão de codificação)
-        const isStandardMultiple = (width % 16 === 0) && (height % 16 === 0);
-        
-        return !isCommonResolution || !isStandardMultiple;
-      }
-      return false;
-    })();
-    
-    // Bonus 1: Datas incoerentes + (Progressive/4:4:4 ou ICC+Adobe) (+2 pontos)
-    if (hasInconsistentDates && ((manipulationScore.isProgressive || manipulationScore.is444) || 
-        (manipulationScore.hasHPAdobe && manipulationScore.editingSoftware))) {
-      bonus += 2;
-      appliedBonuses.push('Datas incoerentes + padrão de edição (+2)');
-    }
-    
-    // Bonus 2: Redimensionamento + (Progressive ou 4:4:4) (+2 pontos)  
-    if (hasResizing && (manipulationScore.isProgressive || manipulationScore.is444)) {
-      bonus += 2;
-      appliedBonuses.push('Redimensionamento + reprocessamento (+2)');
-    }
-    
-    // Bonus 3: Progressive DCT + YCbCr 4:4:4 Subsampling (+2 pontos)
+    // Bônus 1: Progressive + 4:4:4 → +2
     if (manipulationScore.isProgressive && manipulationScore.is444) {
       bonus += 2;
-      appliedBonuses.push('Progressive DCT + Subamostragem 4:4:4 (+2)');
+      appliedBonuses.push('Progressive + Subamostragem 4:4:4 (+2)');
+      console.log('✓ Bônus 1 aplicado: Progressive + 4:4:4');
     }
     
-    // Bonus 4: ICC HP + Progressive (+2 pontos)
-    if (manipulationScore.hasHPAdobe && manipulationScore.isProgressive) {
+    // Bônus 2: ICC específico + Software explícito → +2
+    if (manipulationScore.hasSpecificICC && manipulationScore.editingSoftware) {
       bonus += 2;
-      appliedBonuses.push('ICC HP/Adobe + Progressive (+2)');
+      appliedBonuses.push('ICC específico + Software explícito (+2)');
+      console.log('✓ Bônus 2 aplicado: ICC específico + Software explícito');
     }
     
-    // Bonus 5: Tags IA + EXIF preservado (+3 pontos)
-    if (manipulationScore.hasAITags && !manipulationScore.missingEssentialExif) {
-      bonus += 3;
-      appliedBonuses.push('Tags IA + EXIF preservado (+3)');
-    }
-    
-    // Bonus 6: C2PA + qualquer indicador de edição (+3 pontos)
-    if (manipulationScore.hasC2PA && (manipulationScore.editingSoftware || manipulationScore.isProgressive || manipulationScore.is444)) {
-      bonus += 3;
-      appliedBonuses.push('C2PA + indicador de edição (+3)');
-    }
+    console.log('Total de bônus aplicados:', bonus, appliedBonuses);
     
     return { total: bonus, applied: appliedBonuses };
   }, [exifData, manipulationScore]);
@@ -511,7 +423,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     }
     
     // Specific ICC profiles (HP/Adobe)
-    const hasSpecificICC = manipulationScore.hasHPAdobe;
+    const hasSpecificICC = manipulationScore.hasSpecificICC;
     if (hasSpecificICC) {
       indicators.push('ICC Profile específico');
     }
@@ -545,14 +457,31 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
   const check420Subsampling = useMemo(() => {
     if (!exifData) return false;
     
-    const ycbcrSampling = exifData['EXIF:YCbCrSubSampling'] || 
+    // Buscar YCbCr subsampling com fallback para JFIF
+    const ycbcrSampling = exifData['File:YCbCrSubSampling'] || 
+                         exifData['EXIF:YCbCrSubSampling'] ||
                          exifData['Composite:YCbCrSubSampling'] ||
-                         exifData['JFIF:YCbCrSubSampling'] ||
-                         exifData['File:YCbCrSubSampling'];
-    // Aceitar APENAS "2 2" para 4:2:0 - Rejeitar "2 1" (que é 4:2:2)
-    const result = ycbcrSampling === '2 2' || ycbcrSampling === '2, 2';
+                         exifData['JFIF:YCbCrSubSampling']; // Fallback para JFIF
     
-    console.log('🔍 Digital Transport Check - 4:2:0 Subsampling:', result, 'Value:', ycbcrSampling);
+    if (!ycbcrSampling) {
+      console.log('🔍 Digital Transport Check - YCbCr não encontrado');
+      return false;
+    }
+    
+    // Normalizar e aceitar variações de 4:2:0
+    const normalized = String(ycbcrSampling).toLowerCase().trim();
+    const is420 = normalized === '2 2' || 
+                  normalized === '2, 2' || 
+                  normalized === '4:2:0' || 
+                  normalized.includes('ycbcr4:2:0') ||
+                  normalized.includes('4:2:0 (2 2)');
+    
+    // Rejeitar explicitamente 4:2:2 ("2 1")
+    const is422 = normalized === '2 1' || normalized === '2, 1';
+    
+    const result = is420 && !is422;
+    
+    console.log('🔍 Digital Transport Check - 4:2:0 Subsampling:', result, 'Valor normalizado:', normalized);
     
     return result;
   }, [exifData]);
@@ -560,16 +489,31 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
   const checkNoEditorMarks = useMemo(() => {
     if (!exifData) return false;
     
+    // Lista curta: apenas os campos essenciais para transporte digital
     const editorTags = [
-      'EXIF:Software', 'XMP:CreatorTool', 'XMP:HistoryAction',
-      'EXIF:ProcessingSoftware', 'EXIF:HostComputer'
+      'EXIF:Software', 
+      'XMP:CreatorTool', 
+      'APP14:Adobe',
+      'PhotoshopQuality'
     ];
     
-    const hasEditor = editorTags.some(tag => exifData[tag]);
-    const result = !hasEditor;
+    // Outros campos apenas para log (não bloqueiam transporte)
+    const additionalTags = [
+      'XMP:HistoryAction', 'EXIF:ProcessingSoftware', 'EXIF:HostComputer'
+    ];
+    
+    const hasEssentialEditor = editorTags.some(tag => exifData[tag]);
+    const hasAdditionalMarks = additionalTags.some(tag => exifData[tag]);
+    
+    const result = !hasEssentialEditor;
+    
+    if (hasAdditionalMarks) {
+      console.log('🔍 Digital Transport Check - Additional marks (não bloqueiam):', 
+        additionalTags.filter(tag => exifData[tag]).map(tag => `${tag}: ${exifData[tag]}`));
+    }
     
     if (!result) {
-      console.log('🔍 Digital Transport Check - Editor marks found:', 
+      console.log('🔍 Digital Transport Check - Essential editor marks found:', 
         editorTags.filter(tag => exifData[tag]).map(tag => `${tag}: ${exifData[tag]}`));
     }
     
@@ -579,12 +523,32 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
   const checkNeutralICC = useMemo(() => {
     if (!exifData) return false;
     
-    const iccTags = Object.keys(exifData).filter(key => key.startsWith('ICC_Profile:'));
-    const result = iccTags.length === 0;
+    // Buscar ICC Profile ou descrição
+    const iccDescription = exifData['ICC_Profile:ProfileDescription'] || 
+                          exifData['ICC:ProfileDescription'] ||
+                          exifData['EXIF:ColorSpace'] ||
+                          exifData['ColorSpace'] ||
+                          exifData['ICC_Profile:DeviceManufacturer'] ||
+                          exifData['ICC:DeviceManufacturer'] ||
+                          exifData['ICC-header:ProfileCreator'];
     
-    if (!result) {
-      console.log('🔍 Digital Transport Check - ICC Profile found:', iccTags);
+    if (!iccDescription) {
+      console.log('🔍 Digital Transport Check - Sem ICC Profile: NEUTRO');
+      return true; // Sem ICC = neutro
     }
+    
+    // Verificar se NÃO contém perfis específicos (case-insensitive)
+    const description = String(iccDescription).toLowerCase();
+    const isSpecific = description.includes('adobe') ||
+                      description.includes('hewlett') ||
+                      description.includes('hp') ||
+                      description.includes('prophoto') ||
+                      description.includes('romm') ||
+                      description.includes('adobe rgb');
+    
+    const result = !isSpecific; // É neutro se NÃO for específico (sRGB = neutro)
+    
+    console.log('🔍 Digital Transport Check - ICC Profile:', description, 'É neutro:', result);
     
     return result;
   }, [exifData]);
@@ -625,29 +589,38 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
   }, [exifData, fileMetadata]);
 
   const isDigitalTransport = useMemo(() => {
-    const criteriaMet = [
-      checkCriticalExifMissing,
-      check420Subsampling, 
-      checkNoEditorMarks,
-      checkNeutralICC
+    const criteria = [
+      { name: 'EXIF crítico ausente', met: checkCriticalExifMissing },
+      { name: '4:2:0 subsampling', met: check420Subsampling },
+      { name: 'Sem marcas de editor', met: checkNoEditorMarks }, 
+      { name: 'ICC neutro', met: checkNeutralICC }
     ];
     
-    const allCriteriaMet = criteriaMet.every(Boolean);
-    const reinforcementCount = optionalReinforcements.length;
+    const allCriteriaMet = criteria.every(c => c.met);
     const hasIntentionalEditing = hasIntentionalEditingIndicators;
     
-    // Digital transport is only detected if all criteria are met, 
-    // there are reinforcements, AND there are no intentional editing indicators
-    const result = allCriteriaMet && reinforcementCount >= 1 && !hasIntentionalEditing;
+    // Exclusões que bloqueiam transporte digital
+    const hasProgressiveDCT = manipulationScore.isProgressive;
+    const has444Subsampling = manipulationScore.is444;
+    const hasEditorMarks = manipulationScore.editingSoftware;
+    const hasSpecificICC = manipulationScore.hasSpecificICC;
+    
+    const isExcluded = hasProgressiveDCT || has444Subsampling || hasEditorMarks || hasSpecificICC;
+    
+    // Transporte digital: AND dos 4 critérios SEM exclusões (sem exigir reforços)
+    const result = allCriteriaMet && !isExcluded;
     
     console.log('🔍 Digital Transport Final Check:');
+    criteria.forEach(c => console.log(`  - ${c.name}:`, c.met));
     console.log('  - All criteria met:', allCriteriaMet);
-    console.log('  - Reinforcements:', reinforcementCount, optionalReinforcements);
-    console.log('  - Has intentional editing:', hasIntentionalEditing);
+    console.log('  - Exclusões: Progressive:', hasProgressiveDCT, '4:4:4:', has444Subsampling, 
+                'Editor:', hasEditorMarks, 'ICC específico:', hasSpecificICC);
+    console.log('  - Is excluded:', isExcluded);
+    console.log('  - Reforços opcionais:', optionalReinforcements, '(não exigidos)');
     console.log('  - Result (Digital Transport):', result);
     
     return result;
-  }, [checkCriticalExifMissing, check420Subsampling, checkNoEditorMarks, checkNeutralICC, optionalReinforcements, hasIntentionalEditingIndicators]);
+  }, [checkCriticalExifMissing, check420Subsampling, checkNoEditorMarks, checkNeutralICC, optionalReinforcements, hasIntentionalEditingIndicators, manipulationScore]);
 
   // Apply digital transport limitation
   const adjustedScore = isDigitalTransport ? Math.min(finalScore, 7) : finalScore;
@@ -804,8 +777,8 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
             <div className="text-sm text-muted-foreground mb-1">Pontuação Final</div>
             <div className="text-xs text-muted-foreground">Suspeição de Manipulação</div>
             {isDigitalTransport && (
-              <div className="text-xs text-yellow-600 mt-1">
-                *Transporte digital detectado (sem EXIF crítico, 4:2:0, sem software, ICC neutro). Severidade limitada a Moderado.
+              <div className="text-xs text-yellow-600 mt-1 p-2 bg-yellow-50 rounded">
+                🚛 Transporte digital detectado (sem EXIF crítico, 4:2:0, sem software, ICC neutro). Severidade limitada a Moderado.
               </div>
             )}
           </div>
