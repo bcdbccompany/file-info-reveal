@@ -468,98 +468,179 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
   }, [manipulationScore.score, cooccurrenceBonus.total]);
 
   // Helper functions for digital transport detection
+  // Intentional Editing Indicators Detection
+  const hasIntentionalEditingIndicators = useMemo(() => {
+    if (!exifData) return false;
+    
+    const indicators = [];
+    
+    // Progressive DCT
+    const progressiveDCT = manipulationScore.isProgressive;
+    if (progressiveDCT) {
+      indicators.push('Progressive DCT');
+    }
+    
+    // 4:4:4 Subsampling  
+    const is444 = manipulationScore.is444;
+    if (is444) {
+      indicators.push('Subamostragem 4:4:4');
+    }
+    
+    // Detected resizing (from manipulation score logic) - checking for non-standard aspect ratios
+    const width = exifData['EXIF:ExifImageWidth'] || exifData['File:ImageWidth'];
+    const height = exifData['EXIF:ExifImageHeight'] || exifData['File:ImageHeight'];
+    if (width && height) {
+      const aspectRatio = parseInt(width) / parseInt(height);
+      const commonRatios = [16/9, 4/3, 3/2, 1/1, 9/16, 3/4, 2/3];
+      const isCommonRatio = commonRatios.some(ratio => Math.abs(aspectRatio - ratio) < 0.05);
+      if (!isCommonRatio) {
+        indicators.push('Proporção não-padrão (possível crop)');
+      }
+    }
+    
+    // Editing software present (from manipulation score)
+    const hasEditor = manipulationScore.editingSoftware;
+    if (hasEditor) {
+      indicators.push('Software de edição detectado');
+    }
+    
+    // Specific ICC profiles (HP/Adobe)
+    const hasSpecificICC = manipulationScore.hasHPAdobe;
+    if (hasSpecificICC) {
+      indicators.push('ICC Profile específico');
+    }
+    
+    // Check co-occurrence bonuses (indicates complex editing)
+    const hasCooccurrenceBonuses = cooccurrenceBonus.total > 0;
+    if (hasCooccurrenceBonuses) {
+      indicators.push('Padrões de co-ocorrência detectados');
+    }
+    
+    console.log('🎨 Intentional Editing Indicators:', indicators);
+    
+    return indicators.length > 0;
+  }, [exifData, manipulationScore, cooccurrenceBonus]);
+
+  // Digital Transport Detection
   const checkCriticalExifMissing = useMemo(() => {
-    const hasMakeModel = exifData['EXIF:Make'] && exifData['EXIF:Model'];
-    const hasOriginalDate = exifData['EXIF:DateTimeOriginal'] || exifData['EXIF:CreateDate'];
-    return !hasMakeModel && !hasOriginalDate;
+    if (!exifData) return false;
+    
+    const criticalTags = ['EXIF:Make', 'EXIF:Model', 'EXIF:DateTime'];
+    const hasCritical = criticalTags.some(tag => exifData[tag]);
+    const result = !hasCritical;
+    
+    if (result) {
+      console.log('🔍 Digital Transport Check - Critical EXIF missing:', criticalTags.filter(tag => !exifData[tag]));
+    }
+    
+    return result;
   }, [exifData]);
 
   const check420Subsampling = useMemo(() => {
-    const subsampling = exifData['JFIF:YCbCrSubSampling'] || exifData['EXIF:YCbCrSubSampling'] || exifData['File:YCbCrSubSampling'];
-    return subsampling === '2 2' || subsampling === '4:2:0' || 
-           (typeof subsampling === 'string' && subsampling.includes('4:2:0'));
+    if (!exifData) return false;
+    
+    const ycbcrSampling = exifData['EXIF:YCbCrSubSampling'] || 
+                         exifData['Composite:YCbCrSubSampling'] ||
+                         exifData['JFIF:YCbCrSubSampling'] ||
+                         exifData['File:YCbCrSubSampling'];
+    const result = ycbcrSampling === '2 1' || ycbcrSampling === '2, 1' || ycbcrSampling === '2 2';
+    
+    console.log('🔍 Digital Transport Check - 4:2:0 Subsampling:', result, 'Value:', ycbcrSampling);
+    
+    return result;
   }, [exifData]);
 
   const checkNoEditorMarks = useMemo(() => {
-    const editorIndicators = [
-      'EXIF:Software',
-      'XMP:CreatorTool', 
-      'APP14:Adobe',
-      'EXIF:PhotoshopQuality',
-      'XMP:PhotoshopVersion',
-      'EXIF:ColorSpace', // Can indicate processing
-      'XMP-photoshop:History'
+    if (!exifData) return false;
+    
+    const editorTags = [
+      'EXIF:Software', 'XMP:CreatorTool', 'XMP:HistoryAction',
+      'EXIF:ProcessingSoftware', 'EXIF:HostComputer'
     ];
     
-    return !editorIndicators.some(indicator => exifData[indicator]);
+    const hasEditor = editorTags.some(tag => exifData[tag]);
+    const result = !hasEditor;
+    
+    if (!result) {
+      console.log('🔍 Digital Transport Check - Editor marks found:', 
+        editorTags.filter(tag => exifData[tag]).map(tag => `${tag}: ${exifData[tag]}`));
+    }
+    
+    return result;
   }, [exifData]);
 
   const checkNeutralICC = useMemo(() => {
-    const iccIndicators = [
-      'ICC_Profile:ProfileDescription',
-      'ICC-header:ProfileDescription',
-      'ICC_Profile:ProfileCMMType',
-      'ICC-header:ProfileCMMType'
-    ];
+    if (!exifData) return false;
     
-    const problematicProfiles = ['Adobe', 'HP', 'ProPhoto', 'ROMM', 'Adobe RGB'];
+    const iccTags = Object.keys(exifData).filter(key => key.startsWith('ICC_Profile:'));
+    const result = iccTags.length === 0;
     
-    return !iccIndicators.some(indicator => {
-      const value = String(exifData[indicator] || '').toLowerCase();
-      return problematicProfiles.some(profile => value.includes(profile.toLowerCase()));
-    });
+    if (!result) {
+      console.log('🔍 Digital Transport Check - ICC Profile found:', iccTags);
+    }
+    
+    return result;
   }, [exifData]);
 
-  // Optional reinforcements for logging
   const optionalReinforcements = useMemo(() => {
-    const longEdge = Math.max(
-      parseInt(exifData['File:ImageWidth'] || '0'),
-      parseInt(exifData['File:ImageHeight'] || '0')
-    );
-    const isSmallResolution = longEdge <= 2048;
+    if (!exifData) return [];
     
-    const encodingProcess = exifData['File:EncodingProcess'];
-    const isBaselineDCT = encodingProcess === 'Baseline DCT' || encodingProcess === 'Progressive DCT, Huffman coding';
+    const reinforcements = [];
     
-    // Calculate bits per pixel (rough estimate)
-    const width = parseInt(exifData['File:ImageWidth'] || '0');
-    const height = parseInt(exifData['File:ImageHeight'] || '0');
-    const fileSize = fileMetadata.size_bytes || 0;
-    const bpp = (width && height && fileSize) ? (fileSize * 8) / (width * height) : 0;
-    const isLowBpp = bpp > 0 && bpp < 1; // Less than 1 bit per pixel indicates high compression
+    // Low resolution/DPI
+    const xResolution = exifData['EXIF:XResolution'] || exifData['JFIF:XResolution'];
+    const yResolution = exifData['EXIF:YResolution'] || exifData['JFIF:YResolution'];
+    if ((xResolution && parseFloat(xResolution) <= 72) || (yResolution && parseFloat(yResolution) <= 72)) {
+      reinforcements.push('Baixa resolução/DPI');
+    }
     
-    return {
-      smallResolution: isSmallResolution,
-      baselineDCT: isBaselineDCT,
-      lowBpp: isLowBpp,
-      details: {
-        longEdge,
-        encodingProcess,
-        bpp: bpp.toFixed(2)
+    // Small file size for dimensions
+    if (fileMetadata?.size_bytes && exifData['EXIF:ExifImageWidth'] && exifData['EXIF:ExifImageHeight']) {
+      const width = parseInt(exifData['EXIF:ExifImageWidth']);
+      const height = parseInt(exifData['EXIF:ExifImageHeight']);
+      const pixels = width * height;
+      const bytesPerPixel = fileMetadata.size_bytes / pixels;
+      
+      if (bytesPerPixel < 0.5) { // Less than 0.5 bytes per pixel indicates high compression
+        reinforcements.push('Compressão alta para dimensões');
       }
-    };
+    }
+    
+    // Generic JFIF identifier
+    const jfifVersion = exifData['JFIF:JFIFVersion'];
+    if (jfifVersion) {
+      reinforcements.push('Presença de JFIF genérico');
+    }
+    
+    console.log('🔍 Digital Transport Check - Optional reinforcements:', reinforcements);
+    
+    return reinforcements;
   }, [exifData, fileMetadata]);
 
-  // Determine digital transport pattern
   const isDigitalTransport = useMemo(() => {
-    const criteria = {
-      criticalExifMissing: checkCriticalExifMissing,
-      has420Subsampling: check420Subsampling,
-      noEditorMarks: checkNoEditorMarks,
-      neutralICC: checkNeutralICC
-    };
+    const criteriaMet = [
+      checkCriticalExifMissing,
+      check420Subsampling, 
+      checkNoEditorMarks,
+      checkNeutralICC
+    ];
     
-    const allCriteriaMet = Object.values(criteria).every(Boolean);
+    const allCriteriaMet = criteriaMet.every(Boolean);
+    const reinforcementCount = optionalReinforcements.length;
+    const hasIntentionalEditing = hasIntentionalEditingIndicators;
     
-    // Debug logging
-    console.log('Digital Transport Detection:', {
-      criteria,
-      optionalReinforcements,
-      allCriteriaMet
-    });
+    // Digital transport is only detected if all criteria are met, 
+    // there are reinforcements, AND there are no intentional editing indicators
+    const result = allCriteriaMet && reinforcementCount >= 1 && !hasIntentionalEditing;
     
-    return allCriteriaMet;
-  }, [checkCriticalExifMissing, check420Subsampling, checkNoEditorMarks, checkNeutralICC, optionalReinforcements]);
+    console.log('🔍 Digital Transport Final Check:');
+    console.log('  - All criteria met:', allCriteriaMet);
+    console.log('  - Reinforcements:', reinforcementCount, optionalReinforcements);
+    console.log('  - Has intentional editing:', hasIntentionalEditing);
+    console.log('  - Result (Digital Transport):', result);
+    
+    return result;
+  }, [checkCriticalExifMissing, check420Subsampling, checkNoEditorMarks, checkNeutralICC, optionalReinforcements, hasIntentionalEditingIndicators]);
 
   // Apply digital transport limitation
   const adjustedScore = isDigitalTransport ? Math.min(finalScore, 7) : finalScore;
@@ -717,7 +798,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
             <div className="text-xs text-muted-foreground">Suspeição de Manipulação</div>
             {isDigitalTransport && (
               <div className="text-xs text-yellow-600 mt-1">
-                *Transporte digital detectado (sem EXIF crítico, 4:2:0, sem software, ICC neutro). Severidade limitada a Moderado.
+                *Transporte digital detectado (ausência de EXIF crítico, subamostragem 4:2:0, ausência de software, ICC neutro, sem indicadores de edição intencional). Severidade limitada a Moderado.
               </div>
             )}
           </div>
