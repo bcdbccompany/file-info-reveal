@@ -98,14 +98,29 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     const indicators: string[] = [];
     const details: string[] = [];
 
-    // 1. EXIF ausente (peso 0) - Apenas condição booleana para outras regras
+    // 1. EXIF crítico ausente (peso 4) - Detecção de remoção intencional
     const hasMake = exifData['EXIF:Make'] || exifData['IFD0:Make'];
     const hasModel = exifData['EXIF:Model'] || exifData['IFD0:Model'];
     const hasISO = exifData['EXIF:ISO'] || exifData['EXIF:RecommendedExposureIndex'] || exifData['EXIF:ISOSpeedRatings'];
     const hasCreateDate = exifData['EXIF:CreateDate'] || exifData['EXIF:DateTimeOriginal'];
     
     const missingEssentialExif = !hasMake || !hasModel || !hasISO || !hasCreateDate;
-    // EXIF ausente não pontua mais - apenas usado como condição para outras regras
+    
+    // Detectar remoção intencional de EXIF (alta qualidade + ausência de metadados críticos)
+    const imageWidth = parseInt(exifData['EXIF:ImageWidth'] || exifData['File:ImageWidth'] || '0');
+    const imageHeight = parseInt(exifData['EXIF:ImageHeight'] || exifData['File:ImageHeight'] || '0');
+    const isHighQuality = imageWidth >= 800 && imageHeight >= 600; // Imagem de tamanho significativo
+    
+    console.log('=== DEBUG AUSÊNCIAS INTENCIONAIS ===');
+    console.log('Dimensões da imagem:', imageWidth, 'x', imageHeight, '- Alta qualidade:', isHighQuality);
+    console.log('EXIF crítico - Make:', !!hasMake, 'Model:', !!hasModel, 'ISO:', !!hasISO, 'CreateDate:', !!hasCreateDate);
+    
+    if (missingEssentialExif && isHighQuality) {
+      score += 4;
+      indicators.push('EXIF crítico ausente');
+      details.push('EXIF crítico ausente (+4): Ausência de Make, Model, ISO ou CreateDate em imagem de alta qualidade');
+      console.log('✓ EXIF crítico ausente: +4 pontos');
+    }
 
     // 2. Software explícito (peso 4) - Detecção robusta de tags Adobe/Photoshop
     const allExifFields = Object.keys(exifData);
@@ -191,6 +206,38 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       details.push(`Software explícito (+13): ${activeIndicators.join(', ')}`);
     }
 
+    // 2a. Software ausente (peso 2) - Quando esperado mas não está presente
+    if (!editingSoftware && isHighQuality) {
+      // Verificar se deveria ter software de edição mas não tem
+      const hasSoftware = exifData['EXIF:Software'] || exifData['IFD0:Software'] || 
+                         exifData['XMP:CreatorTool'] || exifData['EXIF:Creator'] || 
+                         exifData['XMP:Software'] || exifData['XMP:Tool'];
+      
+      if (!hasSoftware) {
+        score += 2;
+        indicators.push('Software ausente');
+        details.push('Software ausente (+2): Ausência completa de informações de software em imagem de alta qualidade');
+      }
+    }
+
+    // 2b. Datas EXIF ausentes (peso 3)
+    if (!hasCreateDate && isHighQuality) {
+      score += 3;
+      indicators.push('Datas EXIF ausentes');
+      details.push('Datas EXIF ausentes (+3): Ausência de CreateDate/DateTimeOriginal em imagem de alta qualidade');
+    }
+
+    // 2c. ICC Profile ausente (peso 3) - Detectar ausência quando esperado
+    const hasIccProfile = exifData['ICC_Profile:ProfileDescription'] || exifData['ICC:ProfileDescription'] ||
+                         exifData['ICC_Profile:DeviceManufacturer'] || exifData['ICC:DeviceManufacturer'] ||
+                         exifData['EXIF:ColorSpace'] || exifData['ColorSpace'];
+    
+    if (!hasIccProfile && isHighQuality) {
+      score += 3;
+      indicators.push('ICC Profile ausente');
+      details.push('ICC Profile ausente (+3): Ausência de perfil ICC em imagem de alta qualidade');
+    }
+
     // 3. XMP/Tags IA (peso 5) - Procurar tags específicas de IA
     const xmpFields = Object.keys(exifData).filter(key => key.startsWith('XMP:'));
     const hasAITags = xmpFields.some(field => {
@@ -250,21 +297,23 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       details.push('YCbCr 4:4:4 (+3): Subsampling sem compressão');
     }
 
-    // 7. ICC Profile HP/Adobe (peso 3)
+    // 7. ICC Profile HP/Adobe (peso 3) - Apenas quando perfil específico está presente
     const iccDescription = exifData['ICC_Profile:ProfileDescription'] || exifData['EXIF:ColorSpace'] || 
                           exifData['ICC:ProfileDescription'] || exifData['ColorSpace'] ||
                           exifData['ICC_Profile:DeviceManufacturer'] || exifData['ICC:DeviceManufacturer'];
     
-    const hasHPAdobe = iccDescription?.toString().toLowerCase().includes('hp') || 
-                       iccDescription?.toString().toLowerCase().includes('adobe') ||
-                       iccDescription?.toString().toLowerCase().includes('hewlett') ||
+    const hasHPAdobe = iccDescription && (
+                       iccDescription.toString().toLowerCase().includes('hp') || 
+                       iccDescription.toString().toLowerCase().includes('adobe') ||
+                       iccDescription.toString().toLowerCase().includes('hewlett') ||
                        exifData['ICC_Profile:DeviceManufacturer']?.toString().toLowerCase().includes('adbe') ||
-                       exifData['ICC_Profile:DeviceManufacturer']?.toString().toLowerCase().includes('hp');
+                       exifData['ICC_Profile:DeviceManufacturer']?.toString().toLowerCase().includes('hp')
+                      );
     
     if (hasHPAdobe) {
       score += 3;
       indicators.push('ICC HP/Adobe');
-      details.push('ICC HP/Adobe (+3): Perfil ICC HP/Adobe');
+      details.push('ICC HP/Adobe (+3): Perfil ICC específico HP/Adobe presente');
     }
 
     // 8. SceneType inconsistente (peso 2) - Detectar valor "Unknown" ou ausente (BeFunky/editores)
