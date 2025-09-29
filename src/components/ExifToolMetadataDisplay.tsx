@@ -443,12 +443,20 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
   const checkCriticalExifMissing = useMemo(() => {
     if (!exifData) return false;
     
-    const criticalTags = ['EXIF:Make', 'EXIF:Model', 'EXIF:DateTime'];
-    const hasCritical = criticalTags.some(tag => exifData[tag]);
+    // Check for critical EXIF tags in both EXIF and IFD0 variants
+    const hasMake = exifData['EXIF:Make'] || exifData['IFD0:Make'];
+    const hasModel = exifData['EXIF:Model'] || exifData['IFD0:Model']; 
+    const hasDateTime = exifData['EXIF:DateTime'] || exifData['EXIF:DateTimeOriginal'] || exifData['EXIF:CreateDate'];
+    
+    const hasCritical = hasMake || hasModel || hasDateTime;
     const result = !hasCritical;
     
     if (result) {
-      console.log('🔍 Digital Transport Check - Critical EXIF missing:', criticalTags.filter(tag => !exifData[tag]));
+      const missing = [];
+      if (!hasMake) missing.push('Make');
+      if (!hasModel) missing.push('Model'); 
+      if (!hasDateTime) missing.push('DateTime');
+      console.log('🔍 Digital Transport Check - Critical EXIF missing:', missing);
     }
     
     return result;
