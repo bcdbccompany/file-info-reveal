@@ -12,6 +12,7 @@ export interface ValidationResult {
   riskSignals: string[];      // Evidence suggesting manipulation
   recommendation: string;     // Action recommendation based on level
   isDigitalTransport?: boolean;  // Digital transport detection flag
+  hasStrongC2PA?: boolean;    // C2PA strong signal (edited + DigitalSourceType AI)
   debugInfo?: any;           // Debug information if enabled
 }
 
@@ -27,6 +28,7 @@ export interface ValidationConfig {
     subsampling444: number;
     specificICC: number;
     aiIndicators: number;
+    silentEditSignal: number;     // Weight for each silent edit signal
   };
   thresholds: {
     level0Max: number;  // 0-1: Low risk
@@ -34,6 +36,8 @@ export interface ValidationConfig {
     level2Max: number;  // 4-6: High risk
     // ≥7: Very high risk (level 3)
   };
+  silentEditMax?: number;         // Cap for silent edit signals (default 2)
+  c2paStrongBump?: number;        // Bump for C2PA strong signal (default 0)
 }
 
 // Default configuration with balanced weights
@@ -49,12 +53,15 @@ export const DEFAULT_CONFIG: ValidationConfig = {
     subsampling444: 2,
     specificICC: 1,
     aiIndicators: 2,
+    silentEditSignal: 1,          // +1 per silent edit signal
   },
   thresholds: {
     level0Max: 1,
     level1Max: 3,
     level2Max: 6,
-  }
+  },
+  silentEditMax: 2,               // Cap at 2 signals
+  c2paStrongBump: 0,              // Disabled by default (can be set to 2)
 };
 
 // Known editor software patterns (excluding firmware)
@@ -73,6 +80,20 @@ const KNOWN_EDITORS = [
   /vsco/i,
   /instagram/i,
   /facetune/i,
+  // Online editors
+  /befunky/i,
+  /photopea/i,
+  /pixlr/i,
+  /fotor/i,
+  /picsart/i,
+  /photoroom/i,
+  /remove\.bg/i,
+  /iloveimg/i,
+  /photoscissors/i,
+  /inpaint/i,
+  /cleanup\.pictures/i,
+  /photolemur/i,
+  /topaz/i,
 ];
 
 // Firmware pattern - typically alphanumeric build strings
@@ -126,54 +147,173 @@ export function hasAnyCreateDate(exifData: any): boolean {
 }
 
 /**
- * Detect real editor software, excluding firmware
+ * Detect real editor software with progressive fallback:
+ * 1. Canonical fields (Software, CreatorTool)
+ * 2. XMP-photoshop namespace
+ * 3. Extended search in specific metadata fields (not URLs/comments)
  */
-export function detectRealEditor(exifData: any): { isEditor: boolean; software: string | null; confidence: 'high' | 'medium' | 'low' } {
-  const softwareFields = ['EXIF:Software', 'IFD0:Software', 'XMP:CreatorTool'];
+export function detectRealEditor(exifData: any): { 
+  isEditor: boolean; 
+  software: string | null; 
+  confidence: 'high' | 'medium' | 'low';
+  source?: string;
+} {
+  const looksLikeFirmware = (s: string) => /^[A-Z0-9._-]{6,}$/i.test(s);
   
+  // 1. Check canonical fields first
+  const softwareFields = ['EXIF:Software', 'IFD0:Software', 'XMP:CreatorTool'];
   for (const field of softwareFields) {
     const software = exifData[field];
-    if (software) {
-      // Check if it matches known editors
+    if (software && !looksLikeFirmware(software)) {
       for (const editorPattern of KNOWN_EDITORS) {
         if (editorPattern.test(software)) {
-          return { isEditor: true, software, confidence: 'high' };
+          return { isEditor: true, software, confidence: 'high', source: 'canonical' };
         }
       }
-      
-      // Check if it's likely firmware (exclude from editor detection)
-      if (FIRMWARE_PATTERN.test(software)) {
-        continue;
-      }
-      
-      // If it contains editing-related keywords but not in known list
       if (/edit|process|enhance|filter|adjust/i.test(software)) {
-        return { isEditor: true, software, confidence: 'medium' };
+        return { isEditor: true, software, confidence: 'medium', source: 'canonical' };
       }
     }
   }
 
-  // Check XMP-photoshop namespace for editing indicators
-  const xmpPhotoshopFields = Object.keys(exifData).filter(key => key.startsWith('XMP-photoshop:'));
+  // 2. Check XMP-photoshop namespace
+  const xmpPhotoshopFields = Object.keys(exifData).filter(key => 
+    key.startsWith('XMP-photoshop:') && !key.includes('DateCreated')
+  );
   if (xmpPhotoshopFields.length > 0) {
-    return { isEditor: true, software: 'Adobe Photoshop (XMP)', confidence: 'high' };
+    return { isEditor: true, software: 'Adobe Photoshop (XMP)', confidence: 'high', source: 'xmp-photoshop' };
+  }
+
+  // 3. Extended search in specific metadata fields (not all values to avoid false positives)
+  const extendedSearchFields = [
+    'XMP:Creator', 'XMP:Rights', 'XMP:Description',
+    'IPTC:ObjectName', 'IPTC:Caption-Abstract',
+    'EXIF:ImageDescription', 'EXIF:UserComment',
+    'xmpMM:History', 'xmpMM:DerivedFrom', 'XMP-photoshop:History',
+  ];
+  
+  for (const field of extendedSearchFields) {
+    const value = exifData[field];
+    if (value && typeof value === 'string') {
+      const lowerValue = value.toLowerCase();
+      // Skip URLs and paths
+      if (lowerValue.includes('http') || lowerValue.includes('://') || lowerValue.includes('\\')) {
+        continue;
+      }
+      for (const editorPattern of KNOWN_EDITORS) {
+        if (editorPattern.test(value)) {
+          return { isEditor: true, software: value, confidence: 'medium', source: `extended:${field}` };
+        }
+      }
+    }
   }
 
   return { isEditor: false, software: null, confidence: 'low' };
 }
 
 /**
- * Check for AI generation indicators in XMP data
+ * Detect weak signals of silent editing (editors that preserve EXIF)
+ * Each signal adds a light penalty (+1) - multiple signals accumulate
  */
-export function detectAIIndicators(exifData: any): { hasAI: boolean; indicators: string[] } {
-  const indicators: string[] = [];
-  
-  // Check for AI-specific XMP fields
-  const aiFields = [
-    'XMP-iptcExt:DigitalSourceType',
-    'XMP-iptcExt:DigitalSourceFileType'
-  ];
+export function detectSilentEditSignals(exifData: any): { 
+  count: number; 
+  reasons: string[] 
+} {
+  const reasons: string[] = [];
 
+  // Signal 1: SceneType is not "Directly photographed"
+  const sceneType = String(
+    exifData['ExifIFD:SceneType'] || exifData['EXIF:SceneType'] || ''
+  );
+  if (sceneType && !/directly photographed/i.test(sceneType)) {
+    reasons.push(`SceneType não é "Directly photographed" (${sceneType})`);
+  }
+
+  // Signal 2: ComponentsConfiguration anomaly (ExifTool error parsing)
+  const components = String(
+    exifData['ExifIFD:ComponentsConfiguration'] || exifData['EXIF:ComponentsConfiguration'] || ''
+  );
+  if (/err\s*\(63\)/i.test(components) || /undef/i.test(components)) {
+    reasons.push(`ComponentsConfiguration anômalo (${components})`);
+  }
+
+  // Signal 3: MakerNote absent despite Make/Model present (only for brands that usually have it)
+  const hasMake = !!(exifData['IFD0:Make'] || exifData['EXIF:Make']);
+  const hasModel = !!(exifData['IFD0:Model'] || exifData['EXIF:Model']);
+  const hasMakerNote = !!(
+    exifData['ExifIFD:MakerNote'] || exifData['EXIF:MakerNote'] || 
+    Object.keys(exifData).some(k => k.startsWith('MakerNote:'))
+  );
+  
+  if (hasMake && hasModel && !hasMakerNote) {
+    const make = String(exifData['IFD0:Make'] || exifData['EXIF:Make'] || '').toLowerCase();
+    const brandsWithMakerNote = ['canon', 'nikon', 'sony', 'fujifilm', 'panasonic', 'olympus'];
+    if (brandsWithMakerNote.some(brand => make.includes(brand))) {
+      reasons.push(`MakerNote ausente apesar de Make/Model (${make})`);
+    }
+  }
+
+  // Signal 4: EXIF thumbnail absent
+  const hasThumb = !!(
+    exifData['IFD1:ImageWidth'] || exifData['Thumbnail:ImageWidth'] || exifData['IFD1:ThumbnailImage']
+  );
+  if (hasMake && hasModel && !hasThumb) {
+    reasons.push('Thumbnail EXIF (IFD1) ausente');
+  }
+
+  return { count: reasons.length, reasons };
+}
+
+/**
+ * Check for AI generation indicators from XMP IPTC and C2PA/JUMBF/CBOR
+ */
+export function detectAIIndicators(exifData: any): { 
+  hasAI: boolean; 
+  indicators: string[];
+  hasStrongC2PA: boolean;
+} {
+  const indicators: string[] = [];
+  let hasStrongC2PA = false;
+  
+  // === C2PA/JUMBF/CBOR Detection (Samsung native AI) ===
+  
+  const jumbfType = String(exifData['JUMBF:JUMDType'] || '');
+  const jumbfLabel = String(exifData['JUMBF:JUMDLabel'] || '');
+  const hasC2PAManifest = /c2pa/i.test(jumbfType + ' ' + jumbfLabel);
+  
+  if (hasC2PAManifest) {
+    indicators.push('C2PA manifest presente (JUMBF)');
+  }
+
+  // Mandatory Adjustment 1: Strong bump only with c2pa.edited + DigitalSourceType AI
+  const action = String(exifData['CBOR:ActionsAction'] || '').toLowerCase();
+  const actionEdited = /c2pa\.edited/.test(action);
+  if (action && action.includes('c2pa')) {
+    indicators.push(`C2PA action: ${action}`);
+  }
+
+  const agent = String(exifData['CBOR:ActionsSoftwareAgent'] || '').trim();
+  if (agent) {
+    indicators.push(`C2PA agent: ${agent}`);
+  }
+
+  const dsrcCBOR = String(exifData['CBOR:ActionsDigitalSourceType'] || '').toLowerCase();
+  const dsrcAI = /compositewithtrainedalgorithmicmedia|generatedbycomputeralgorithmicmedia/i.test(dsrcCBOR);
+  if (dsrcCBOR && dsrcAI) {
+    indicators.push(`C2PA DigitalSourceType: ${dsrcCBOR}`);
+  }
+
+  // Strong signal only if BOTH present
+  hasStrongC2PA = actionEdited && dsrcAI;
+
+  const genAI = String(exifData['JSON:GenAIType'] || '').trim();
+  if (genAI === '1' || genAI === 'true') {
+    indicators.push('GenAIType flag ativada');
+  }
+
+  // === XMP IPTC Detection (existing logic) ===
+  
+  const aiFields = ['XMP-iptcExt:DigitalSourceType', 'XMP-iptcExt:DigitalSourceFileType'];
   for (const field of aiFields) {
     const value = exifData[field];
     if (value && /compositeWithTrainedAlgorithmicMedia|artificiallyGenerated/i.test(value)) {
@@ -181,16 +321,17 @@ export function detectAIIndicators(exifData: any): { hasAI: boolean; indicators:
     }
   }
 
-  // Check for AI-related keywords in software/creator fields
+  // Mandatory Adjustment 2: Restrictive regex (closed list, word-boundary)
+  const AI_SOFTWARE_RE = /\b(midjourney|dall[\s-]?e|stable\s+diffusion|leonardo\.ai|firefly)\b/i;
   const creatorFields = ['XMP:CreatorTool', 'XMP-photoshop:CreatorTool'];
   for (const field of creatorFields) {
     const value = exifData[field];
-    if (value && /midjourney|dall-e|stable diffusion|ai|artificial|generated/i.test(value)) {
+    if (value && AI_SOFTWARE_RE.test(value)) {
       indicators.push(`AI software detected in ${field}: ${value}`);
     }
   }
 
-  return { hasAI: indicators.length > 0, indicators };
+  return { hasAI: indicators.length > 0, indicators, hasStrongC2PA };
 }
 
 /**
@@ -342,20 +483,46 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     positiveSignals.push(`Creation date present: ${canonicalCaptureDate}`);
   }
 
-  // 2. Editor detection
+  // 2. Editor detection (now with fallback)
   const editorResult = detectRealEditor(exifData);
   if (editorResult.isEditor) {
     score += config.weights.editorDetected;
-    riskSignals.push(`Editor software detected: ${editorResult.software} (+${config.weights.editorDetected})`);
+    const source = editorResult.source ? ` [${editorResult.source}]` : '';
+    riskSignals.push(`Editor software detected: ${editorResult.software}${source} (+${config.weights.editorDetected})`);
   } else {
     positiveSignals.push('No editing software detected');
   }
 
-  // 3. AI indicators
+  // 2.5. Silent edit signals (feature toggle + cap)
+  const silentEditEnabled = import.meta.env.VITE_FEATURE_SILENT_EDIT !== 'false';
+  if (silentEditEnabled && !editorResult.isEditor) {
+    const silentEdit = detectSilentEditSignals(exifData);
+    if (silentEdit.count > 0) {
+      const maxSilent = config.silentEditMax ?? 2;
+      const applied = Math.min(silentEdit.count, maxSilent);
+      score += applied * config.weights.silentEditSignal;
+      for (let i = 0; i < applied; i++) {
+        riskSignals.push(`Indício de edição silenciosa: ${silentEdit.reasons[i]} (+${config.weights.silentEditSignal})`);
+      }
+      if (debugEnabled && silentEdit.count > maxSilent) {
+        debugInfo.silentEditCapped = `${silentEdit.count - maxSilent} sinais não aplicados (cap=${maxSilent})`;
+      }
+    }
+  }
+
+  // 3. AI indicators (now includes C2PA)
   const aiResult = detectAIIndicators(exifData);
   if (aiResult.hasAI) {
     score += config.weights.aiIndicators;
-    riskSignals.push(`AI generation indicators: ${aiResult.indicators.join(', ')} (+${config.weights.aiIndicators})`);
+    for (const indicator of aiResult.indicators) {
+      riskSignals.push(`${indicator} (+${config.weights.aiIndicators})`);
+    }
+    
+    // Mandatory Adjustment 1: Strong bump only with edited + DigitalSourceType AI
+    if (aiResult.hasStrongC2PA && (config.c2paStrongBump ?? 0) > 0) {
+      score += config.c2paStrongBump!;
+      riskSignals.push(`C2PA strong AI signal (+${config.c2paStrongBump})`);
+    }
   }
 
   // 4. Technical consistencies
@@ -423,11 +590,12 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   const digitalTransportEnabled = import.meta.env.VITE_FEATURE_DIGITAL_TRANSPORT !== 'false';
   const dt = digitalTransportEnabled ? detectDigitalTransport(exifData) : { isDigitalTransport: false, reasons: [] };
   
-  // Remove duplicates from riskSignals
+  // Refinement 4: Deduplicate signals
   const uniqueRiskSignals = Array.from(new Set([
     ...riskSignals,
     ...(dt.isDigitalTransport ? dt.reasons.map(r => `Transporte digital: ${r}`) : [])
   ]));
+  const uniquePositiveSignals = Array.from(new Set(positiveSignals));
 
   return {
     level,
@@ -436,10 +604,11 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     canonicalCaptureDate,
     make,
     model,
-    positiveSignals,
+    positiveSignals: uniquePositiveSignals,
     riskSignals: uniqueRiskSignals,
     recommendation,
     isDigitalTransport: !!dt.isDigitalTransport,
+    hasStrongC2PA: aiResult?.hasStrongC2PA || false,
     ...(debugEnabled && { debugInfo })
   };
 }
