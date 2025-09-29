@@ -184,6 +184,25 @@ export function detectRealEditor(exifData: any): {
     return { isEditor: true, software: 'Adobe Photoshop (XMP)', confidence: 'high', source: 'xmp-photoshop' };
   }
 
+  // 2b. Photoshop group signatures (APP13/IRB)
+  // These are specific to Photoshop save/export process (high confidence)
+  const psQuality = exifData['Photoshop:PhotoshopQuality'];
+  const psFormat  = exifData['Photoshop:PhotoshopFormat'];
+  const psScans   = exifData['Photoshop:ProgressiveScans'];
+
+  if (psQuality || psFormat || psScans) {
+    const parts: string[] = [];
+    if (psQuality) parts.push(`Quality=${psQuality}`);
+    if (psFormat)  parts.push(`Format=${psFormat}`);
+    if (psScans)   parts.push(`Scans=${psScans}`);
+    return {
+      isEditor: true,
+      software: `Adobe Photoshop (${parts.join(', ')})`,
+      confidence: 'high',
+      source: 'photoshop-group'
+    };
+  }
+
   // 3. Extended search in specific metadata fields (not all values to avoid false positives)
   const extendedSearchFields = [
     'XMP:Creator', 'XMP:Rights', 'XMP:Description',
