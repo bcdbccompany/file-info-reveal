@@ -90,6 +90,22 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     return hasCameraMake && hasCameraModel && cameraFields >= 2;
   }, [exifData]);
 
+  // Helper functions for consistent metadata checks
+  const hasMakeInfo = () => exifData['EXIF:Make'] || exifData['IFD0:Make'];
+  const hasModelInfo = () => exifData['EXIF:Model'] || exifData['IFD0:Model'];
+  const hasAnyCreateDate = () => {
+    return exifData['EXIF:DateTime'] || 
+           exifData['EXIF:DateTimeOriginal'] || 
+           exifData['EXIF:CreateDate'] ||
+           exifData['ExifIFD:CreateDate'] || 
+           exifData['ExifIFD:DateTime'] || 
+           exifData['ExifIFD:DateTimeOriginal'] ||
+           exifData['IFD0:DateTime'] || 
+           exifData['IFD0:ModifyDate'] ||
+           exifData['XMP:CreateDate'] ||
+           exifData['Composite:SubSecDateTimeOriginal'];
+  };
+
   // Calcular score de manipulação baseado na tabela de validação completa
   const manipulationScore = useMemo(() => {
     if (!exifData) return { score: 0, indicators: [], details: [], isProgressive: false, is444: false, hasHPAdobe: false };
@@ -98,13 +114,38 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     const indicators: string[] = [];
     const details: string[] = [];
 
-    // 1. EXIF crítico ausente (0 pontos - apenas flag) - Detecção para transporte digital
-    const hasMake = exifData['EXIF:Make'] || exifData['IFD0:Make'];
-    const hasModel = exifData['EXIF:Model'] || exifData['IFD0:Model'];
+    // 1. EXIF crítico ausente - Pontuação proporcional baseada no número de campos ausentes
+    const hasMake = hasMakeInfo();
+    const hasModel = hasModelInfo();
     const hasISO = exifData['EXIF:ISO'] || exifData['EXIF:RecommendedExposureIndex'] || exifData['EXIF:ISOSpeedRatings'];
-    const hasCreateDate = exifData['EXIF:CreateDate'] || exifData['EXIF:DateTimeOriginal'];
+    const hasCreateDate = hasAnyCreateDate();
     
-    const missingEssentialExif = !hasMake || !hasModel || !hasCreateDate;
+    // Contar campos críticos ausentes
+    let missingCriticalFields = 0;
+    const missingFields: string[] = [];
+    
+    if (!hasMake) {
+      missingCriticalFields += 1;
+      missingFields.push('Make');
+    }
+    if (!hasModel) {
+      missingCriticalFields += 1;
+      missingFields.push('Model');
+    }
+    if (!hasCreateDate) {
+      missingCriticalFields += 1;
+      missingFields.push('CreateDate');
+    }
+    
+    // Adicionar pontuação proporcional apenas se há campos ausentes
+    const WEIGHT_MISSING_EXIF = 2; // Peso por campo ausente
+    if (missingCriticalFields > 0) {
+      score += missingCriticalFields * WEIGHT_MISSING_EXIF;
+      indicators.push(`EXIF crítico ausente (${missingCriticalFields}/3)`);
+      details.push(`EXIF crítico ausente (+${missingCriticalFields * WEIGHT_MISSING_EXIF}): Campos ausentes: ${missingFields.join(', ')}`);
+    }
+    
+    const missingEssentialExif = missingCriticalFields > 0;
     
     // Detectar ausência de EXIF (sem pontuação - apenas flag para análise)
     const imageWidth = parseInt(exifData['EXIF:ImageWidth'] || exifData['File:ImageWidth'] || '0');
@@ -443,10 +484,10 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
   const checkCriticalExifMissing = useMemo(() => {
     if (!exifData) return false;
     
-    // Check for critical EXIF tags in both EXIF and IFD0 variants
-    const hasMake = exifData['EXIF:Make'] || exifData['IFD0:Make'];
-    const hasModel = exifData['EXIF:Model'] || exifData['IFD0:Model']; 
-    const hasDateTime = exifData['EXIF:DateTime'] || exifData['EXIF:DateTimeOriginal'] || exifData['EXIF:CreateDate'];
+    // Use the same helper functions for consistency
+    const hasMake = hasMakeInfo();
+    const hasModel = hasModelInfo();
+    const hasDateTime = hasAnyCreateDate();
     
     const hasCritical = hasMake || hasModel || hasDateTime;
     const result = !hasCritical;
@@ -455,7 +496,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
       const missing = [];
       if (!hasMake) missing.push('Make');
       if (!hasModel) missing.push('Model'); 
-      if (!hasDateTime) missing.push('DateTime');
+      if (!hasDateTime) missing.push('DateTime/CreateDate');
       console.log('🔍 Digital Transport Check - Critical EXIF missing:', missing);
     }
     
