@@ -243,7 +243,7 @@ export function checkTemporalConsistency(exifData: any): { consistent: boolean; 
  * Main validation function implementing proportional scoring
  */
 export function validateImageMetadata(exifData: any, config: ValidationConfig = DEFAULT_CONFIG): ValidationResult {
-  const debugEnabled = process.env.DEBUG_EXIF === 'true';
+  const debugEnabled = import.meta.env.VITE_DEBUG_EXIF === 'true';
   const debugInfo: any = {};
   
   let score = 0;
