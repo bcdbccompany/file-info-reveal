@@ -11,6 +11,7 @@ export interface ValidationResult {
   positiveSignals: string[];  // Evidence supporting authenticity
   riskSignals: string[];      // Evidence suggesting manipulation
   recommendation: string;     // Action recommendation based on level
+  isDigitalTransport?: boolean;  // Digital transport detection flag
   debugInfo?: any;           // Debug information if enabled
 }
 
@@ -195,32 +196,38 @@ export function detectAIIndicators(exifData: any): { hasAI: boolean; indicators:
 /**
  * Check dimension consistency between EXIF and File data
  */
-export function checkDimensionConsistency(exifData: any): { consistent: boolean; details: string } {
+export function checkDimensionConsistency(exifData: any): { consistent: boolean; details: string; hasData: boolean } {
   const exifWidth = parseInt(exifData['EXIF:ImageWidth'] || exifData['ExifIFD:ExifImageWidth'] || '0');
   const exifHeight = parseInt(exifData['EXIF:ImageHeight'] || exifData['ExifIFD:ExifImageHeight'] || '0');
   const fileWidth = parseInt(exifData['File:ImageWidth'] || '0');
   const fileHeight = parseInt(exifData['File:ImageHeight'] || '0');
 
-  if (exifWidth > 0 && exifHeight > 0 && fileWidth > 0 && fileHeight > 0) {
+  const hasData = exifWidth > 0 && exifHeight > 0 && fileWidth > 0 && fileHeight > 0;
+
+  if (hasData) {
     if (exifWidth !== fileWidth || exifHeight !== fileHeight) {
       return {
         consistent: false,
-        details: `Dimension mismatch: EXIF ${exifWidth}x${exifHeight} vs File ${fileWidth}x${fileHeight}`
+        details: `Dimension mismatch: EXIF ${exifWidth}x${exifHeight} vs File ${fileWidth}x${fileHeight}`,
+        hasData: true
       };
     }
+    return { consistent: true, details: 'Dimensions consistent', hasData: true };
   }
 
-  return { consistent: true, details: 'Dimensions consistent' };
+  return { consistent: true, details: 'No dimension data available', hasData: false };
 }
 
 /**
  * Check temporal consistency between dates
  */
-export function checkTemporalConsistency(exifData: any): { consistent: boolean; details: string } {
+export function checkTemporalConsistency(exifData: any): { consistent: boolean; details: string; hasData: boolean } {
   const dateTimeOriginal = exifData['ExifIFD:DateTimeOriginal'] || exifData['EXIF:DateTimeOriginal'];
   const modifyDate = exifData['IFD0:ModifyDate'] || exifData['EXIF:DateTime'];
 
-  if (dateTimeOriginal && modifyDate) {
+  const hasData = !!(dateTimeOriginal && modifyDate);
+
+  if (hasData) {
     try {
       const originalTime = new Date(dateTimeOriginal);
       const modifiedTime = new Date(modifyDate);
@@ -228,15 +235,69 @@ export function checkTemporalConsistency(exifData: any): { consistent: boolean; 
       if (modifiedTime < originalTime) {
         return {
           consistent: false,
-          details: `Temporal inconsistency: ModifyDate (${modifyDate}) before DateTimeOriginal (${dateTimeOriginal})`
+          details: `Temporal inconsistency: ModifyDate (${modifyDate}) before DateTimeOriginal (${dateTimeOriginal})`,
+          hasData: true
         };
       }
+      return { consistent: true, details: 'Temporal consistency verified', hasData: true };
     } catch (error) {
-      return { consistent: false, details: 'Invalid date format detected' };
+      return { consistent: false, details: 'Invalid date format detected', hasData: true };
     }
   }
 
-  return { consistent: true, details: 'Temporal consistency verified' };
+  return { consistent: true, details: 'No temporal data available', hasData: false };
+}
+
+/**
+ * Detect digital transport (messenger apps) with conservative heuristic
+ * Requires ≥3 signals to trigger
+ */
+export function detectDigitalTransport(exif: Record<string, any>) {
+  const get = (k: string) => exif?.[k];
+
+  // 1) Ausência de EXIF de câmera
+  const hasMake  = !!get('IFD0:Make');
+  const hasModel = !!get('IFD0:Model');
+  const DATE_FIELDS = [
+    'EXIF:DateTime','EXIF:DateTimeOriginal','EXIF:CreateDate',
+    'ExifIFD:DateTime','ExifIFD:DateTimeOriginal','ExifIFD:CreateDate',
+    'IFD0:DateTime','IFD0:ModifyDate',
+    'XMP:CreateDate','XMP:ModifyDate','XMP-exif:DateTimeOriginal','XMP-photoshop:DateCreated'
+  ];
+  const hasAnyDate = DATE_FIELDS.some(k => !!get(k));
+
+  // 2) Sinais típicos de mensageiros
+  const isJPEG = String(get('File:FileType') || '').toLowerCase() === 'jpeg';
+  const jfif   = !!get('JFIF:JFIFVersion');
+  const sub420 = /4:2:0/.test(String(get('File:YCbCrSubSampling') || ''));
+
+  const w = parseInt(get('File:ImageWidth')  || '0', 10);
+  const h = parseInt(get('File:ImageHeight') || '0', 10);
+  const longSide = Math.max(w, h);
+  const longSideIsMessenger =
+    (longSide >= 1580 && longSide <= 1620) || [2048, 1280, 960].includes(longSide);
+
+  const iccDesc      = String(get('ICC_Profile:ProfileDescription')  || '');
+  const iccCopyright = String(get('ICC_Profile:ProfileCopyright')    || '');
+  const iccGoogle    = /srgb/i.test(iccDesc) && /google/i.test(iccCopyright);
+
+  // Votação conservadora: precisa de ≥3 sinais
+  const votes = [
+    isJPEG && !hasMake && !hasModel && !hasAnyDate,
+    isJPEG && jfif && sub420,
+    longSideIsMessenger,
+    iccGoogle
+  ].filter(Boolean).length;
+
+  const isDigitalTransport = votes >= 3;
+
+  const reasons: string[] = [];
+  if (isJPEG && !hasMake && !hasModel && !hasAnyDate) reasons.push('Sem EXIF de câmera (Make/Model/Date)');
+  if (isJPEG && jfif && sub420)                      reasons.push('JPEG + JFIF + 4:2:0');
+  if (longSideIsMessenger)                           reasons.push(`Lado maior ${longSide}px típico de mensageiro`);
+  if (iccGoogle)                                     reasons.push('Perfil ICC sRGB (Google)');
+
+  return { isDigitalTransport, reasons };
 }
 
 /**
@@ -302,7 +363,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   if (!dimensionCheck.consistent) {
     score += config.weights.dimensionMismatch;
     riskSignals.push(`${dimensionCheck.details} (+${config.weights.dimensionMismatch})`);
-  } else {
+  } else if (dimensionCheck.hasData) {
     positiveSignals.push(dimensionCheck.details);
   }
 
@@ -310,7 +371,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   if (!temporalCheck.consistent) {
     score += config.weights.temporalInconsistency;
     riskSignals.push(`${temporalCheck.details} (+${config.weights.temporalInconsistency})`);
-  } else {
+  } else if (temporalCheck.hasData) {
     positiveSignals.push(temporalCheck.details);
   }
 
@@ -358,6 +419,16 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     recommendation = 'Alta probabilidade de manipulação - investigação forense recomendada';
   }
 
+  // Digital transport detection (feature toggle)
+  const digitalTransportEnabled = import.meta.env.VITE_FEATURE_DIGITAL_TRANSPORT !== 'false';
+  const dt = digitalTransportEnabled ? detectDigitalTransport(exifData) : { isDigitalTransport: false, reasons: [] };
+  
+  // Remove duplicates from riskSignals
+  const uniqueRiskSignals = Array.from(new Set([
+    ...riskSignals,
+    ...(dt.isDigitalTransport ? dt.reasons.map(r => `Transporte digital: ${r}`) : [])
+  ]));
+
   return {
     level,
     label,
@@ -366,8 +437,9 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     make,
     model,
     positiveSignals,
-    riskSignals,
+    riskSignals: uniqueRiskSignals,
     recommendation,
+    isDigitalTransport: !!dt.isDigitalTransport,
     ...(debugEnabled && { debugInfo })
   };
 }

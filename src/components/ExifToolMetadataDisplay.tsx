@@ -119,20 +119,8 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
     return info;
   }, [exifData, fileMetadata, validationResult]);
 
-  // Digital Transport Detection (simplified for new system)
-  const isDigitalTransport = useMemo(() => {
-    // Digital transport is detected when we have a low risk level (0 or 1) with specific characteristics
-    return validationResult.level <= 1 && 
-           validationResult.make && 
-           validationResult.model && 
-           validationResult.canonicalCaptureDate &&
-           !validationResult.riskSignals.some(signal => 
-             signal.includes('Editor') || 
-             signal.includes('AI') || 
-             signal.includes('Progressive') ||
-             signal.includes('4:4:4')
-           );
-  }, [validationResult]);
+  // Digital Transport Detection (using flag from validation result)
+  const isDigitalTransport = validationResult?.isDigitalTransport === true;
 
   // Use new validation system results
   const adjustedScore = validationResult.score;
@@ -354,7 +342,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
             )}
 
             {/* Debug Info */}
-            {process.env.DEBUG_EXIF === 'true' && validationResult.debugInfo && (
+            {import.meta.env.VITE_DEBUG_EXIF === 'true' && validationResult.debugInfo && (
               <details className="space-y-2">
                 <summary className="text-sm font-medium cursor-pointer hover:text-primary">
                   Ver informações de debug
