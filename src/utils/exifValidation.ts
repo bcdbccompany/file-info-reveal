@@ -29,6 +29,7 @@ export interface ValidationConfig {
     specificICC: number;
     aiIndicators: number;
     silentEditSignal: number;     // Weight for each silent edit signal
+    cameraExifAbsentCombined: number; // Combined penalty when Make+Model+CreateDate missing without hard signals
   };
   thresholds: {
     level0Max: number;  // 0-1: Low risk
@@ -54,6 +55,7 @@ export const DEFAULT_CONFIG: ValidationConfig = {
     specificICC: 1,
     aiIndicators: 2,
     silentEditSignal: 1,          // +1 per silent edit signal
+    cameraExifAbsentCombined: 1,  // Combined penalty for missing camera EXIF without hard signals
   },
   thresholds: {
     level0Max: 1,
@@ -480,36 +482,70 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     debugInfo.basicInfo = { make, model, canonicalCaptureDate };
   }
 
-  // 1. Check for missing critical EXIF data
-  if (!make) {
-    score += config.weights.makeAbsent;
-    riskSignals.push(`Missing camera make (+${config.weights.makeAbsent})`);
-  } else {
-    positiveSignals.push(`Camera make present: ${make}`);
-  }
+  // 1. Check for missing critical EXIF data with combined penalty
+  const hasMake = !!make;
+  const hasModel = !!model;
+  const hasCreateDate = hasAnyCreateDate(exifData);
 
-  if (!model) {
-    score += config.weights.modelAbsent;
-    riskSignals.push(`Missing camera model (+${config.weights.modelAbsent})`);
-  } else {
-    positiveSignals.push(`Camera model present: ${model}`);
-  }
+  // Detect editor and AI early for combined penalty logic
+  const editorResult = detectRealEditor(exifData);
+  const aiResult = detectAIIndicators(exifData);
 
-  if (!hasAnyCreateDate(exifData)) {
-    score += config.weights.dateTimeAbsent;
-    riskSignals.push(`Missing creation date (+${config.weights.dateTimeAbsent})`);
+  // Detect hard signals for combined penalty
+  const photoshopGroupDetected = !!(
+    exifData['Photoshop:PhotoshopQuality'] ||
+    exifData['Photoshop:PhotoshopFormat'] ||
+    exifData['Photoshop:ProgressiveScans']
+  );
+  const isProgressiveJPEG = String(exifData['File:EncodingProcess'] || '')
+    .toLowerCase()
+    .includes('progressive');
+  const isSubsampling444 = /4:4:4/.test(String(exifData['File:YCbCrSubSampling'] || ''));
+
+  const cameraExifMissing = !hasMake && !hasModel && !hasCreateDate;
+  const hasHardSignals = 
+    editorResult.isEditor ||
+    aiResult.hasAI ||
+    photoshopGroupDetected ||
+    isProgressiveJPEG ||
+    isSubsampling444;
+
+  // Apply combined penalty if all camera EXIF missing and no hard signals
+  if (cameraExifMissing && !hasHardSignals) {
+    const w = config.weights.cameraExifAbsentCombined ?? 1;
+    score += w;
+    riskSignals.push(`EXIF de câmera ausente (Make/Model/Data) (+${w})`);
   } else {
-    positiveSignals.push(`Creation date present: ${canonicalCaptureDate}`);
+    // Otherwise apply individual penalties
+    if (!hasMake) {
+      score += config.weights.makeAbsent;
+      riskSignals.push(`Missing camera make (+${config.weights.makeAbsent})`);
+    } else {
+      positiveSignals.push(`Camera make present: ${make}`);
+    }
+
+    if (!hasModel) {
+      score += config.weights.modelAbsent;
+      riskSignals.push(`Missing camera model (+${config.weights.modelAbsent})`);
+    } else {
+      positiveSignals.push(`Camera model present: ${model}`);
+    }
+
+    if (!hasCreateDate) {
+      score += config.weights.dateTimeAbsent;
+      riskSignals.push(`Missing creation date (+${config.weights.dateTimeAbsent})`);
+    } else {
+      positiveSignals.push(`Creation date present: ${canonicalCaptureDate}`);
+    }
   }
 
   // 2. Editor detection (now with fallback)
-  const editorResult = detectRealEditor(exifData);
   if (editorResult.isEditor) {
     score += config.weights.editorDetected;
     const source = editorResult.source ? ` [${editorResult.source}]` : '';
     riskSignals.push(`Editor software detected: ${editorResult.software}${source} (+${config.weights.editorDetected})`);
   } else {
-    positiveSignals.push('No editing software detected');
+    positiveSignals.push('Nenhum software de edição declarado');
   }
 
   // 2.5. Silent edit signals (feature toggle + cap)
@@ -529,8 +565,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     }
   }
 
-  // 3. AI indicators (now includes C2PA)
-  const aiResult = detectAIIndicators(exifData);
+  // 3. AI indicators (now includes C2PA) - already detected above
   if (aiResult.hasAI) {
     score += config.weights.aiIndicators;
     for (const indicator of aiResult.indicators) {
