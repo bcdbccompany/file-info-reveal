@@ -76,7 +76,7 @@ export default function ExifToolMetadataDisplay({ metadata }: ExifToolMetadataDi
         make: null,
         model: null,
         positiveSignals: [],
-        riskSignals: ['No metadata available'],
+        riskSignals: ['Nenhum metadado disponível'],
         recommendation: 'Sem metadados disponíveis - análise forense necessária'
       };
     }
