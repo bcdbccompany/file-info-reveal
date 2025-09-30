@@ -370,14 +370,14 @@ export function checkDimensionConsistency(exifData: any): { consistent: boolean;
     if (exifWidth !== fileWidth || exifHeight !== fileHeight) {
       return {
         consistent: false,
-        details: `Dimension mismatch: EXIF ${exifWidth}x${exifHeight} vs File ${fileWidth}x${fileHeight}`,
+        details: `Inconsistência de dimensões: EXIF ${exifWidth}x${exifHeight} vs Arquivo ${fileWidth}x${fileHeight}`,
         hasData: true
       };
     }
-    return { consistent: true, details: 'Dimensions consistent', hasData: true };
+    return { consistent: true, details: 'Dimensões consistentes', hasData: true };
   }
 
-  return { consistent: true, details: 'No dimension data available', hasData: false };
+  return { consistent: true, details: 'Dados de dimensão não disponíveis', hasData: false };
 }
 
 /**
@@ -397,17 +397,17 @@ export function checkTemporalConsistency(exifData: any): { consistent: boolean; 
       if (modifiedTime < originalTime) {
         return {
           consistent: false,
-          details: `Temporal inconsistency: ModifyDate (${modifyDate}) before DateTimeOriginal (${dateTimeOriginal})`,
+          details: `Inconsistência temporal: ModifyDate (${modifyDate}) anterior a DateTimeOriginal (${dateTimeOriginal})`,
           hasData: true
         };
       }
-      return { consistent: true, details: 'Temporal consistency verified', hasData: true };
+      return { consistent: true, details: 'Consistência temporal verificada', hasData: true };
     } catch (error) {
-      return { consistent: false, details: 'Invalid date format detected', hasData: true };
+      return { consistent: false, details: 'Formato de data inválido detectado', hasData: true };
     }
   }
 
-  return { consistent: true, details: 'No temporal data available', hasData: false };
+  return { consistent: true, details: 'Dados temporais não disponíveis', hasData: false };
 }
 
 /**
@@ -519,23 +519,23 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     // Otherwise apply individual penalties
     if (!hasMake) {
       score += config.weights.makeAbsent;
-      riskSignals.push(`Missing camera make (+${config.weights.makeAbsent})`);
+      riskSignals.push(`Marca da câmera ausente (+${config.weights.makeAbsent})`);
     } else {
-      positiveSignals.push(`Camera make present: ${make}`);
+      positiveSignals.push(`Marca da câmera presente: ${make}`);
     }
 
     if (!hasModel) {
       score += config.weights.modelAbsent;
-      riskSignals.push(`Missing camera model (+${config.weights.modelAbsent})`);
+      riskSignals.push(`Modelo da câmera ausente (+${config.weights.modelAbsent})`);
     } else {
-      positiveSignals.push(`Camera model present: ${model}`);
+      positiveSignals.push(`Modelo da câmera presente: ${model}`);
     }
 
     if (!hasCreateDate) {
       score += config.weights.dateTimeAbsent;
-      riskSignals.push(`Missing creation date (+${config.weights.dateTimeAbsent})`);
+      riskSignals.push(`Data de criação ausente (+${config.weights.dateTimeAbsent})`);
     } else {
-      positiveSignals.push(`Creation date present: ${canonicalCaptureDate}`);
+      positiveSignals.push(`Data de criação presente: ${canonicalCaptureDate}`);
     }
   }
 
@@ -543,7 +543,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   if (editorResult.isEditor) {
     score += config.weights.editorDetected;
     const source = editorResult.source ? ` [${editorResult.source}]` : '';
-    riskSignals.push(`Editor software detected: ${editorResult.software}${source} (+${config.weights.editorDetected})`);
+    riskSignals.push(`Software de edição detectado: ${editorResult.software}${source} (+${config.weights.editorDetected})`);
   } else {
     positiveSignals.push('Nenhum software de edição declarado');
   }
@@ -575,7 +575,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     // Mandatory Adjustment 1: Strong bump only with edited + DigitalSourceType AI
     if (aiResult.hasStrongC2PA && (config.c2paStrongBump ?? 0) > 0) {
       score += config.c2paStrongBump!;
-      riskSignals.push(`C2PA strong AI signal (+${config.c2paStrongBump})`);
+      riskSignals.push(`Sinal C2PA forte de IA (+${config.c2paStrongBump})`);
     }
   }
 
@@ -599,18 +599,18 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   // 5. Technical indicators
   if (exifData['File:EncodingProcess']?.includes('Progressive')) {
     score += config.weights.progressiveDCT;
-    riskSignals.push(`Progressive JPEG encoding (+${config.weights.progressiveDCT})`);
+    riskSignals.push(`Codificação JPEG progressiva (+${config.weights.progressiveDCT})`);
   }
 
   if (exifData['File:YCbCrSubSampling']?.includes('4:4:4')) {
     score += config.weights.subsampling444;
-    riskSignals.push(`Unusual YCbCr 4:4:4 subsampling (+${config.weights.subsampling444})`);
+    riskSignals.push(`Subamostragem YCbCr 4:4:4 incomum (+${config.weights.subsampling444})`);
   }
 
   const iccProfile = exifData['ICC_Profile:ProfileDescription'];
   if (iccProfile && !['sRGB', 'Adobe RGB', 'ProPhoto RGB'].includes(iccProfile)) {
     score += config.weights.specificICC;
-    riskSignals.push(`Specific ICC profile: ${iccProfile} (+${config.weights.specificICC})`);
+    riskSignals.push(`Perfil ICC específico: ${iccProfile} (+${config.weights.specificICC})`);
   }
 
   if (debugEnabled) {
