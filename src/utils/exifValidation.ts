@@ -242,6 +242,19 @@ export function detectSilentEditSignals(exifData: any): {
 } {
   const reasons: string[] = [];
 
+  // Detectar smartphone pela marca OU modelo
+  const brandOrModel = String(
+    exifData['IFD0:Make']   || exifData['EXIF:Make']   ||
+    exifData['IFD0:Model']  || exifData['EXIF:Model']  || ''
+  ).toLowerCase();
+
+  const isSmartphoneBrand = /\b(samsung|apple|iphone|google|pixel|motorola|xiaomi|redmi|huawei|oneplus|oppo|vivo|realme|asus)\b/i
+    .test(brandOrModel);
+
+  // Checar tipo do arquivo para o caso do IFD1
+  const fileType = String(exifData['File:FileType'] || '').toLowerCase();
+  const isJPEG = fileType === 'jpeg' || /jpe?g/.test(String(exifData['File:FileTypeExtension'] || ''));
+
   // Signal 1: SceneType is not "Directly photographed"
   const sceneType = String(
     exifData['ExifIFD:SceneType'] || exifData['EXIF:SceneType'] || ''
@@ -251,11 +264,16 @@ export function detectSilentEditSignals(exifData: any): {
   }
 
   // Signal 2: ComponentsConfiguration anomaly (ExifTool error parsing)
-  const components = String(
-    exifData['ExifIFD:ComponentsConfiguration'] || exifData['EXIF:ComponentsConfiguration'] || ''
-  );
-  if (/err\s*\(63\)/i.test(components) || /undef/i.test(components)) {
-    reasons.push(`ComponentsConfiguration anômalo (${components})`);
+  // Ignorar em smartphones (comum/benigno)
+  if (!isSmartphoneBrand) {
+    const components = String(
+      exifData['ExifIFD:ComponentsConfiguration'] || exifData['EXIF:ComponentsConfiguration'] || ''
+    );
+    if (/(?:^|,)\s*err\s*\(63\)|\bundef\b/i.test(components)) {
+      if (!reasons.includes(`ComponentsConfiguration anômalo (${components})`)) {
+        reasons.push(`ComponentsConfiguration anômalo (${components})`);
+      }
+    }
   }
 
   // Signal 3: MakerNote absent despite Make/Model present (only for brands that usually have it)
@@ -275,11 +293,22 @@ export function detectSilentEditSignals(exifData: any): {
   }
 
   // Signal 4: EXIF thumbnail absent
-  const hasThumb = !!(
-    exifData['IFD1:ImageWidth'] || exifData['Thumbnail:ImageWidth'] || exifData['IFD1:ThumbnailImage']
-  );
-  if (hasMake && hasModel && !hasThumb) {
-    reasons.push('Thumbnail EXIF (IFD1) ausente');
+  // Ignorar em smartphones e apenas para JPEG (comum/benigno)
+  if (!isSmartphoneBrand && isJPEG) {
+    const hasThumb = !!(
+      exifData['IFD1:ImageWidth'] ||
+      exifData['Thumbnail:ImageWidth'] ||
+      exifData['IFD1:ThumbnailImage']
+    );
+
+    const hasMake  = !!(exifData['IFD0:Make']  || exifData['EXIF:Make']);
+    const hasModel = !!(exifData['IFD0:Model'] || exifData['EXIF:Model']);
+
+    if (hasMake && hasModel && !hasThumb) {
+      if (!reasons.includes('Thumbnail EXIF (IFD1) ausente')) {
+        reasons.push('Thumbnail EXIF (IFD1) ausente');
+      }
+    }
   }
 
   return { count: reasons.length, reasons };
