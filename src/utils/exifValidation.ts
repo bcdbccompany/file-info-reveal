@@ -637,7 +637,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   }
 
   const iccProfile = exifData['ICC_Profile:ProfileDescription'];
-  if (iccProfile && !['sRGB', 'Adobe RGB', 'ProPhoto RGB', 'Display P3'].includes(iccProfile)) {
+  if (iccProfile && !['sRGB', 'Adobe RGB', 'ProPhoto RGB', 'Display P3', 'DCI-P3 D65 Gamut with sRGB Transfer'].includes(iccProfile)) {
     score += config.weights.specificICC;
     riskSignals.push(`Perfil ICC específico: ${iccProfile} (+${config.weights.specificICC})`);
   }
