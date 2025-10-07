@@ -30,7 +30,7 @@ export interface ValidationConfig {
     aiIndicators: number;
     silentEditSignal: number;     // Weight for each silent edit signal
     cameraExifAbsentCombined: number; // Combined penalty when Make+Model+CreateDate missing without hard signals
-    systemFileTampering: number;  // Penalty when FileModifyDate >> FileCreateDate
+    impossibleDate: number;       // Penalty when capture date is in the future
   };
   thresholds: {
     level0Max: number;  // 0-1: Low risk
@@ -57,7 +57,7 @@ export const DEFAULT_CONFIG: ValidationConfig = {
     aiIndicators: 2,
     silentEditSignal: 1,          // +1 per silent edit signal
     cameraExifAbsentCombined: 1,  // Combined penalty for missing camera EXIF without hard signals
-    systemFileTampering: 2,       // +2 when file modified >2min after creation
+    impossibleDate: 2,            // +2 when capture date >10min in the future
   },
   thresholds: {
     level0Max: 1,
@@ -102,6 +102,24 @@ const KNOWN_EDITORS = [
 
 // Firmware pattern - typically alphanumeric build strings
 const FIRMWARE_PATTERN = /^[A-Z0-9._-]{6,}$/;
+
+/**
+ * Parse EXIF date with optional timezone offset
+ * @param raw - Date string in EXIF format "2025:09:02 16:57:47"
+ * @param offset - Optional timezone offset like "+03:00" or "-05:00"
+ * @returns Date object or null if invalid
+ */
+function parseExifDate(raw?: string, offset?: string): Date | null {
+  if (!raw || typeof raw !== 'string') return null;
+  
+  // Convert "2025:09:02 16:57:47" to "2025-09-02T16:57:47"
+  const normalized = raw.replace(/^(\d{4}):(\d{2}):(\d{2})\s+/, '$1-$2-$3T');
+  const tz = (offset && /[+-]\d{2}:\d{2}/.test(offset)) ? offset : '';
+  const isoString = normalized + tz;
+  
+  const date = new Date(isoString);
+  return isNaN(date.getTime()) ? null : date;
+}
 
 /**
  * Get canonical capture date with timezone information
@@ -316,43 +334,6 @@ export function detectSilentEditSignals(exifData: any): {
   return { count: reasons.length, reasons };
 }
 
-/**
- * Detect system file tampering by comparing FileCreateDate and FileModifyDate
- * Indicates possible local editing when modification time is significantly later (>2min)
- */
-export function detectSystemFileTampering(exifData: any): {
-  hasTampering: boolean;
-  diffMinutes: number;
-  signal: string;
-} {
-  const fileCreate = exifData['System:FileCreateDate'];
-  const fileModify = exifData['System:FileModifyDate'];
-  
-  if (!fileCreate || !fileModify) {
-    return { hasTampering: false, diffMinutes: 0, signal: '' };
-  }
-  
-  try {
-    // Parse dates - ExifTool format: "2025:08:27 14:09:34-03:00"
-    const createTime = new Date(fileCreate.replace(/(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3'));
-    const modifyTime = new Date(fileModify.replace(/(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3'));
-    
-    const diffMs = modifyTime.getTime() - createTime.getTime();
-    const diffMinutes = Math.round(diffMs / (1000 * 60));
-    
-    if (diffMinutes > 2) {
-      return {
-        hasTampering: true,
-        diffMinutes,
-        signal: `Arquivo modificado ${diffMinutes} min após criação (possível edição local)`
-      };
-    }
-  } catch (e) {
-    console.warn('Erro ao analisar datas System:', e);
-  }
-  
-  return { hasTampering: false, diffMinutes: 0, signal: '' };
-}
 
 /**
  * Check for AI generation indicators from XMP IPTC and C2PA/JUMBF/CBOR
@@ -454,26 +435,26 @@ export function checkDimensionConsistency(exifData: any): { consistent: boolean;
  */
 export function checkTemporalConsistency(exifData: any): { consistent: boolean; details: string; hasData: boolean } {
   const dateTimeOriginal = exifData['ExifIFD:DateTimeOriginal'] || exifData['EXIF:DateTimeOriginal'];
+  const offsetOriginal = exifData['ExifIFD:OffsetTimeOriginal'] || 
+                        exifData['EXIF:OffsetTimeOriginal'] ||
+                        exifData['ExifIFD:OffsetTime'] || 
+                        exifData['EXIF:OffsetTime'];
+  
   const modifyDate = exifData['IFD0:ModifyDate'] || exifData['EXIF:DateTime'];
 
-  const hasData = !!(dateTimeOriginal && modifyDate);
+  const originalTime = parseExifDate(dateTimeOriginal, offsetOriginal);
+  const modifiedTime = parseExifDate(modifyDate, undefined);
 
-  if (hasData) {
-    try {
-      const originalTime = new Date(dateTimeOriginal);
-      const modifiedTime = new Date(modifyDate);
-      
-      if (modifiedTime < originalTime) {
-        return {
-          consistent: false,
-          details: `Inconsistência temporal: ModifyDate (${modifyDate}) anterior a DateTimeOriginal (${dateTimeOriginal})`,
-          hasData: true
-        };
-      }
-      return { consistent: true, details: 'Consistência temporal verificada', hasData: true };
-    } catch (error) {
-      return { consistent: false, details: 'Formato de data inválido detectado', hasData: true };
-    }
+  if (originalTime && modifiedTime && modifiedTime < originalTime) {
+    return {
+      consistent: false,
+      details: `Inconsistência temporal: ModifyDate (${modifyDate}) anterior a DateTimeOriginal (${dateTimeOriginal})`,
+      hasData: true
+    };
+  }
+  
+  if (originalTime || modifiedTime) {
+    return { consistent: true, details: 'Consistência temporal verificada', hasData: true };
   }
 
   return { consistent: true, details: 'Dados temporais não disponíveis', hasData: false };
@@ -603,7 +584,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     if (!hasCreateDate) {
       score += config.weights.dateTimeAbsent;
       riskSignals.push(`Data de criação ausente (+${config.weights.dateTimeAbsent})`);
-    } else {
+    } else if (canonicalCaptureDate) {
       positiveSignals.push(`Data de criação presente: ${canonicalCaptureDate}`);
     }
   }
@@ -665,6 +646,30 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     positiveSignals.push(temporalCheck.details);
   }
 
+  // Check for impossible dates (future)
+  try {
+    const dto = exifData['ExifIFD:DateTimeOriginal'] || exifData['EXIF:DateTimeOriginal'];
+    const dtoOffset = exifData['ExifIFD:OffsetTimeOriginal'] || 
+                     exifData['EXIF:OffsetTimeOriginal'] ||
+                     exifData['ExifIFD:OffsetTime'] || 
+                     exifData['EXIF:OffsetTime'];
+    
+    const captureDate = parseExifDate(dto, dtoOffset);
+    
+    if (captureDate) {
+      const now = new Date();
+      const diffMs = captureDate.getTime() - now.getTime();
+      
+      // More than 10 minutes in the future
+      if (diffMs > 10 * 60 * 1000) {
+        score += config.weights.impossibleDate;
+        riskSignals.push(`Data de captura no futuro: ${dto} (+${config.weights.impossibleDate})`);
+      }
+    }
+  } catch (e) {
+    // Silently ignore parsing errors
+  }
+
   // 5. Technical indicators
   if (exifData['File:EncodingProcess']?.includes('Progressive')) {
     score += config.weights.progressiveDCT;
@@ -680,13 +685,6 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   if (iccProfile && !['sRGB', 'Adobe RGB', 'ProPhoto RGB', 'Display P3', 'DCI-P3 D65 Gamut with sRGB Transfer'].includes(iccProfile)) {
     score += config.weights.specificICC;
     riskSignals.push(`Perfil ICC específico: ${iccProfile} (+${config.weights.specificICC})`);
-  }
-
-  // 6. System file tampering detection
-  const systemTampering = detectSystemFileTampering(exifData);
-  if (systemTampering.hasTampering) {
-    score += config.weights.systemFileTampering;
-    riskSignals.push(`${systemTampering.signal} (+${config.weights.systemFileTampering})`);
   }
 
   if (debugEnabled) {
