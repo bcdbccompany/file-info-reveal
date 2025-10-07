@@ -30,6 +30,7 @@ export interface ValidationConfig {
     aiIndicators: number;
     silentEditSignal: number;     // Weight for each silent edit signal
     cameraExifAbsentCombined: number; // Combined penalty when Make+Model+CreateDate missing without hard signals
+    systemFileTampering: number;  // Penalty when FileModifyDate >> FileCreateDate
   };
   thresholds: {
     level0Max: number;  // 0-1: Low risk
@@ -56,6 +57,7 @@ export const DEFAULT_CONFIG: ValidationConfig = {
     aiIndicators: 2,
     silentEditSignal: 1,          // +1 per silent edit signal
     cameraExifAbsentCombined: 1,  // Combined penalty for missing camera EXIF without hard signals
+    systemFileTampering: 2,       // +2 when file modified >2min after creation
   },
   thresholds: {
     level0Max: 1,
@@ -312,6 +314,44 @@ export function detectSilentEditSignals(exifData: any): {
   }
 
   return { count: reasons.length, reasons };
+}
+
+/**
+ * Detect system file tampering by comparing FileCreateDate and FileModifyDate
+ * Indicates possible local editing when modification time is significantly later (>2min)
+ */
+export function detectSystemFileTampering(exifData: any): {
+  hasTampering: boolean;
+  diffMinutes: number;
+  signal: string;
+} {
+  const fileCreate = exifData['System:FileCreateDate'];
+  const fileModify = exifData['System:FileModifyDate'];
+  
+  if (!fileCreate || !fileModify) {
+    return { hasTampering: false, diffMinutes: 0, signal: '' };
+  }
+  
+  try {
+    // Parse dates - ExifTool format: "2025:08:27 14:09:34-03:00"
+    const createTime = new Date(fileCreate.replace(/(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3'));
+    const modifyTime = new Date(fileModify.replace(/(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3'));
+    
+    const diffMs = modifyTime.getTime() - createTime.getTime();
+    const diffMinutes = Math.round(diffMs / (1000 * 60));
+    
+    if (diffMinutes > 2) {
+      return {
+        hasTampering: true,
+        diffMinutes,
+        signal: `Arquivo modificado ${diffMinutes} min após criação (possível edição local)`
+      };
+    }
+  } catch (e) {
+    console.warn('Erro ao analisar datas System:', e);
+  }
+  
+  return { hasTampering: false, diffMinutes: 0, signal: '' };
 }
 
 /**
@@ -640,6 +680,13 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   if (iccProfile && !['sRGB', 'Adobe RGB', 'ProPhoto RGB', 'Display P3', 'DCI-P3 D65 Gamut with sRGB Transfer'].includes(iccProfile)) {
     score += config.weights.specificICC;
     riskSignals.push(`Perfil ICC específico: ${iccProfile} (+${config.weights.specificICC})`);
+  }
+
+  // 6. System file tampering detection
+  const systemTampering = detectSystemFileTampering(exifData);
+  if (systemTampering.hasTampering) {
+    score += config.weights.systemFileTampering;
+    riskSignals.push(`${systemTampering.signal} (+${config.weights.systemFileTampering})`);
   }
 
   if (debugEnabled) {

@@ -62,11 +62,6 @@ serve(async (req) => {
     // Extract the first exif object (should be the main file data)
     const exifData = exifToolResponse.exif[0]
 
-    // Filter out System:* fields as requested
-    const filteredExifData = Object.fromEntries(
-      Object.entries(exifData).filter(([key]) => !key.startsWith('System:'))
-    )
-
     // Save to database
     const { data: metadata, error: insertError } = await supabase
       .from('file_metadata')
@@ -76,8 +71,8 @@ serve(async (req) => {
         bucket: 'image-uploads',
         mime_type: mimeType,
         size_bytes: sizeBytes,
-        exif_raw: filteredExifData,
-        exif_data: filteredExifData, // Keep backward compatibility
+        exif_raw: exifData,
+        exif_data: exifData, // Keep backward compatibility
         file_info: {
           name: fileName,
           size: sizeBytes,
@@ -99,7 +94,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({ 
       success: true, 
       metadata,
-      rawExifData: filteredExifData
+      rawExifData: exifData
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
