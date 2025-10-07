@@ -583,9 +583,9 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
 
     if (!hasCreateDate) {
       score += config.weights.dateTimeAbsent;
-      riskSignals.push(`Data de criação ausente (+${config.weights.dateTimeAbsent})`);
+      riskSignals.push(`📅 Data de criação ausente (+${config.weights.dateTimeAbsent})`);
     } else if (canonicalCaptureDate) {
-      positiveSignals.push(`Data de criação presente: ${canonicalCaptureDate}`);
+      positiveSignals.push(`📅 Data de criação presente: ${canonicalCaptureDate}`);
     }
   }
 
@@ -641,9 +641,9 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   const temporalCheck = checkTemporalConsistency(exifData);
   if (!temporalCheck.consistent) {
     score += config.weights.temporalInconsistency;
-    riskSignals.push(`${temporalCheck.details} (+${config.weights.temporalInconsistency})`);
+    riskSignals.push(`📅 ${temporalCheck.details} (+${config.weights.temporalInconsistency})`);
   } else if (temporalCheck.hasData) {
-    positiveSignals.push(temporalCheck.details);
+    positiveSignals.push(`📅 ${temporalCheck.details}`);
   }
 
   // Check for impossible dates (future)
@@ -663,7 +663,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
       // More than 10 minutes in the future
       if (diffMs > 10 * 60 * 1000) {
         score += config.weights.impossibleDate;
-        riskSignals.push(`Data de captura no futuro: ${dto} (+${config.weights.impossibleDate})`);
+        riskSignals.push(`📅 Data de captura no futuro: ${dto} (+${config.weights.impossibleDate})`);
       }
     }
   } catch (e) {
