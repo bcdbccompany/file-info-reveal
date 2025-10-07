@@ -615,10 +615,11 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     }
   }
 
-  // 3. AI indicators (now includes C2PA) - already detected above
+  // 3. AI indicators (now includes C2PA) - sum each indicator individually
   if (aiResult.hasAI) {
-    score += config.weights.aiIndicators;
+    // Add points for EACH indicator detected
     for (const indicator of aiResult.indicators) {
+      score += config.weights.aiIndicators; // Add 2 points per indicator
       riskSignals.push(`${indicator} (+${config.weights.aiIndicators})`);
     }
     
