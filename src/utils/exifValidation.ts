@@ -541,6 +541,11 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   const editorResult = detectRealEditor(exifData);
   const aiResult = detectAIIndicators(exifData);
 
+  // Detect digital transport BEFORE scoring
+  const digitalTransportEnabled = import.meta.env.VITE_FEATURE_DIGITAL_TRANSPORT !== 'false';
+  const dt = digitalTransportEnabled ? detectDigitalTransport(exifData) : { isDigitalTransport: false, reasons: [] };
+  const isDigitalTransport = dt.isDigitalTransport;
+
   // Detect hard signals for combined penalty
   const photoshopGroupDetected = !!(
     exifData['Photoshop:PhotoshopQuality'] ||
@@ -560,33 +565,41 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     isProgressiveJPEG ||
     isSubsampling444;
 
-  // Apply combined penalty if all camera EXIF missing and no hard signals
-  if (cameraExifMissing && !hasHardSignals) {
-    const w = config.weights.cameraExifAbsentCombined ?? 1;
-    score += w;
-    riskSignals.push(`EXIF de câmera ausente (Make/Model/Data) (+${w})`);
+  // Block missing EXIF penalties when digital transport detected
+  if (!isDigitalTransport) {
+    // Apply combined penalty if all camera EXIF missing and no hard signals
+    if (cameraExifMissing && !hasHardSignals) {
+      const w = config.weights.cameraExifAbsentCombined ?? 1;
+      score += w;
+      riskSignals.push(`EXIF de câmera ausente (Make/Model/Data) (+${w})`);
+    } else {
+      // Otherwise apply individual penalties
+      if (!hasMake) {
+        score += config.weights.makeAbsent;
+        riskSignals.push(`Marca da câmera ausente (+${config.weights.makeAbsent})`);
+      } else {
+        positiveSignals.push(`Marca da câmera presente: ${make}`);
+      }
+
+      if (!hasModel) {
+        score += config.weights.modelAbsent;
+        riskSignals.push(`Modelo da câmera ausente (+${config.weights.modelAbsent})`);
+      } else {
+        positiveSignals.push(`Modelo da câmera presente: ${model}`);
+      }
+
+      if (!hasCreateDate) {
+        score += config.weights.dateTimeAbsent;
+        riskSignals.push(`📅 Data de criação ausente (+${config.weights.dateTimeAbsent})`);
+      } else if (canonicalCaptureDate) {
+        positiveSignals.push(`📅 Data de criação presente: ${canonicalCaptureDate}`);
+      }
+    }
   } else {
-    // Otherwise apply individual penalties
-    if (!hasMake) {
-      score += config.weights.makeAbsent;
-      riskSignals.push(`Marca da câmera ausente (+${config.weights.makeAbsent})`);
-    } else {
-      positiveSignals.push(`Marca da câmera presente: ${make}`);
-    }
-
-    if (!hasModel) {
-      score += config.weights.modelAbsent;
-      riskSignals.push(`Modelo da câmera ausente (+${config.weights.modelAbsent})`);
-    } else {
-      positiveSignals.push(`Modelo da câmera presente: ${model}`);
-    }
-
-    if (!hasCreateDate) {
-      score += config.weights.dateTimeAbsent;
-      riskSignals.push(`📅 Data de criação ausente (+${config.weights.dateTimeAbsent})`);
-    } else if (canonicalCaptureDate) {
-      positiveSignals.push(`📅 Data de criação presente: ${canonicalCaptureDate}`);
-    }
+    // Digital transport detected - add positive signals but no penalties
+    if (hasMake) positiveSignals.push(`Marca da câmera presente: ${make}`);
+    if (hasModel) positiveSignals.push(`Modelo da câmera presente: ${model}`);
+    if (canonicalCaptureDate) positiveSignals.push(`📅 Data de criação presente: ${canonicalCaptureDate}`);
   }
 
   // 2. Editor detection (now with fallback)
@@ -671,15 +684,22 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     // Silently ignore parsing errors
   }
 
-  // 5. Technical indicators
-  if (exifData['File:EncodingProcess']?.includes('Progressive')) {
+  // 5. Technical indicators (blocked when digital transport detected)
+  if (!isDigitalTransport && exifData['File:EncodingProcess']?.includes('Progressive')) {
     score += config.weights.progressiveDCT;
     riskSignals.push(`Codificação JPEG progressiva (+${config.weights.progressiveDCT})`);
   }
 
-  if (exifData['File:YCbCrSubSampling']?.includes('4:4:4')) {
+  if (!isDigitalTransport && exifData['File:YCbCrSubSampling']?.includes('4:4:4')) {
     score += config.weights.subsampling444;
     riskSignals.push(`Subamostragem YCbCr 4:4:4 incomum (+${config.weights.subsampling444})`);
+  }
+
+  // Add consolidated signal for digital transport (+2 points)
+  if (isDigitalTransport) {
+    const transportWeight = 2;
+    score += transportWeight;
+    riskSignals.push(`🚚 Transporte digital: metadados insuficientes — avaliação limitada (+${transportWeight})`);
   }
 
   const iccProfile = exifData['ICC_Profile:ProfileDescription'];
@@ -700,11 +720,15 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   if (score <= config.thresholds.level0Max) {
     level = 0;
     label = 'Baixo';
-    recommendation = 'Imagem apresenta características consistentes com captura original';
+    recommendation = isDigitalTransport 
+      ? 'Metadados insuficientes - provável transporte digital (avaliação limitada)'
+      : 'Imagem apresenta características consistentes com captura original';
   } else if (score <= config.thresholds.level1Max) {
     level = 1;
     label = 'Moderado';
-    recommendation = 'Verificar sinais de manipulação identificados';
+    recommendation = isDigitalTransport
+      ? 'Metadados insuficientes - provável transporte digital (avaliação limitada)'
+      : 'Verificar sinais de manipulação identificados';
   } else if (score <= config.thresholds.level2Max) {
     level = 2;
     label = 'Forte';
@@ -715,15 +739,8 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     recommendation = 'Alta probabilidade de manipulação - investigação forense recomendada';
   }
 
-  // Digital transport detection (feature toggle)
-  const digitalTransportEnabled = import.meta.env.VITE_FEATURE_DIGITAL_TRANSPORT !== 'false';
-  const dt = digitalTransportEnabled ? detectDigitalTransport(exifData) : { isDigitalTransport: false, reasons: [] };
-  
-  // Refinement 4: Deduplicate signals
-  const uniqueRiskSignals = Array.from(new Set([
-    ...riskSignals,
-    ...(dt.isDigitalTransport ? dt.reasons.map(r => `Transporte digital: ${r}`) : [])
-  ]));
+  // Deduplicate signals (digital transport already added as consolidated signal above)
+  const uniqueRiskSignals = Array.from(new Set(riskSignals));
   const uniquePositiveSignals = Array.from(new Set(positiveSignals));
 
   return {
@@ -736,7 +753,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     positiveSignals: uniquePositiveSignals,
     riskSignals: uniqueRiskSignals,
     recommendation,
-    isDigitalTransport: !!dt.isDigitalTransport,
+    isDigitalTransport: isDigitalTransport,
     hasStrongC2PA: aiResult?.hasStrongC2PA || false,
     ...(debugEnabled && { debugInfo })
   };
