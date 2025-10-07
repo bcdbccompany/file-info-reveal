@@ -43,7 +43,11 @@ const Index = () => {
           <div className="w-full flex justify-center">
             <FileUploadZone
               onFileUpload={handleFileUpload}
-              uploadedFile={processedData?.metadata?.file_name ? { name: processedData.metadata.file_name } as File : null}
+              uploadedFile={processedData?.metadata?.file_name ? { 
+                name: processedData.metadata.file_name,
+                size: processedData.metadata.size_bytes,
+                type: processedData.metadata.mime_type
+              } as File : null}
               onRemoveFile={handleRemoveFile}
             />
           </div>

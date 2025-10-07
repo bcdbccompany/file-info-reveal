@@ -98,12 +98,29 @@ export default function FileUploadZone({ onFileUpload, uploadedFile, onRemoveFil
     }
   }, [processFile]);
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  const formatBytes = (b?: number): string => {
+    if (!Number.isFinite(b)) return '—';
+    if (b === 0) return '0 B';
+    if (b! < 1024) return `${b} B`;
+    if (b! < 1048576) return `${(b! / 1024).toFixed(1)} KB`;
+    if (b! < 1073741824) return `${(b! / 1048576).toFixed(1)} MB`;
+    return `${(b! / 1073741824).toFixed(2)} GB`;
+  };
+
+  const guessFromExt = (name?: string): string | undefined => {
+    const ext = name?.split('.').pop()?.toLowerCase();
+    if (!ext) return undefined;
+    const mimeMap: Record<string, string> = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'webp': 'image/webp',
+      'gif': 'image/gif',
+      'heic': 'image/heic',
+      'pdf': 'application/pdf',
+      'mp4': 'video/mp4',
+    };
+    return mimeMap[ext];
   };
 
   if (uploadedFile) {
@@ -117,7 +134,7 @@ export default function FileUploadZone({ onFileUpload, uploadedFile, onRemoveFil
             <div>
               <p className="font-semibold text-foreground">{uploadedFile.name}</p>
               <p className="text-sm text-muted-foreground">
-                {formatFileSize(uploadedFile.size)} • {uploadedFile.type || 'Tipo desconhecido'}
+                {formatBytes(uploadedFile.size)} • {uploadedFile.type || guessFromExt(uploadedFile.name) || 'Tipo desconhecido'}
               </p>
             </div>
           </div>
