@@ -744,14 +744,16 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   );
 
   // 3. Only container metadata present (basic file info)
-  const hasOnlyContainer = allKeys.every(k => 
-    k.startsWith('System:') || 
-    k.startsWith('File:') || 
-    k.startsWith('JFIF:') || 
-    k.startsWith('IFD1:') ||  // thumbnails
-    k.startsWith('Composite:') ||
-    k.startsWith('ExifTool:')
-  );
+  const hasOnlyContainer = allKeys
+    .filter(k => k !== 'SourceFile')  // Ignore ExifTool-generated field
+    .every(k => 
+      k.startsWith('System:') || 
+      k.startsWith('File:') || 
+      k.startsWith('JFIF:') || 
+      k.startsWith('IFD1:') ||  // thumbnails
+      k.startsWith('Composite:') ||
+      k.startsWith('ExifTool:')
+    );
 
   const insufficientMetadata = noCameraExif && noSoftwareSignature && hasOnlyContainer;
 
