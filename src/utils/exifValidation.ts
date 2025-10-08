@@ -750,6 +750,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
       k.startsWith('System:') || 
       k.startsWith('File:') || 
       k.startsWith('JFIF:') || 
+      (k.startsWith('IFD0:') && /^IFD0:(Orientation|XResolution|YResolution|ResolutionUnit|YCbCrPositioning)$/.test(k)) ||  // Allow only structural IFD0 fields
       k.startsWith('IFD1:') ||  // thumbnails
       k.startsWith('Composite:') ||
       k.startsWith('ExifTool:')
