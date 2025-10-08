@@ -12,6 +12,7 @@ export interface ValidationResult {
   riskSignals: string[];      // Evidence suggesting manipulation
   recommendation: string;     // Action recommendation based on level
   isDigitalTransport?: boolean;  // Digital transport detection flag
+  insufficientMetadata?: boolean;  // Insufficient metadata flag (stripped/absent EXIF)
   hasStrongC2PA?: boolean;    // C2PA strong signal (edited + DigitalSourceType AI)
   debugInfo?: any;           // Debug information if enabled
 }
@@ -712,6 +713,48 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     debugInfo.scoring = { score, positiveSignals, riskSignals };
   }
 
+  // === Insufficient Metadata Detection ===
+  // Detect images with completely stripped metadata (deliberate removal or basic export)
+  // Only triggers when ALL three conditions are met:
+
+  // 1. No camera EXIF (Make, Model, DateTime)
+  const noCameraExif = 
+    !exifData['IFD0:Make'] && 
+    !exifData['IFD0:Model'] && 
+    !exifData['EXIF:DateTimeOriginal'] && 
+    !exifData['IFD0:DateTime'] && 
+    !exifData['EXIF:DateTime'] && 
+    !exifData['ExifIFD:DateTimeOriginal'] && 
+    !exifData['EXIF:CreateDate'] && 
+    !exifData['IFD0:CreateDate'] && 
+    !exifData['ExifIFD:CreateDate'];
+
+  // 2. No software signatures (editing/processing indicators)
+  const allKeys = Object.keys(exifData);
+  const noSoftwareSignature = !allKeys.some(k => 
+    k.startsWith('XMP:') || 
+    k.startsWith('Photoshop:') || 
+    k.startsWith('APP14:') || 
+    k.includes('Adobe') ||
+    k.startsWith('ICC_Profile:') || 
+    k.startsWith('ICC-header:') ||
+    k === 'EXIF:Software' ||
+    k === 'IFD0:Software' ||
+    k === 'EXIF:ProcessingSoftware'
+  );
+
+  // 3. Only container metadata present (basic file info)
+  const hasOnlyContainer = allKeys.every(k => 
+    k.startsWith('System:') || 
+    k.startsWith('File:') || 
+    k.startsWith('JFIF:') || 
+    k.startsWith('IFD1:') ||  // thumbnails
+    k.startsWith('Composite:') ||
+    k.startsWith('ExifTool:')
+  );
+
+  const insufficientMetadata = noCameraExif && noSoftwareSignature && hasOnlyContainer;
+
   // Determine classification level
   let level: number;
   let label: string;
@@ -719,10 +762,18 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
 
   if (score <= config.thresholds.level0Max) {
     level = 0;
-    label = 'Baixo';
-    recommendation = isDigitalTransport 
-      ? 'Metadados insuficientes - provável transporte digital (avaliação limitada)'
-      : 'Imagem apresenta características consistentes com captura original';
+    
+    // Priority order: digital transport takes precedence over insufficient metadata
+    if (isDigitalTransport) {
+      label = 'Baixo (Transporte Digital)';
+      recommendation = 'Metadados insuficientes - provável transporte digital (avaliação limitada)';
+    } else if (insufficientMetadata) {
+      label = 'Baixo (Inconclusivo)';
+      recommendation = 'Metadados insuficientes para validação — possível remoção deliberada ou exportação sem EXIF. Solicite o original do dispositivo.';
+    } else {
+      label = 'Baixo';
+      recommendation = 'Imagem apresenta características consistentes com captura original';
+    }
   } else if (score <= config.thresholds.level1Max) {
     level = 1;
     label = 'Moderado';
@@ -754,6 +805,7 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     riskSignals: uniqueRiskSignals,
     recommendation,
     isDigitalTransport: isDigitalTransport,
+    insufficientMetadata: insufficientMetadata,
     hasStrongC2PA: aiResult?.hasStrongC2PA || false,
     ...(debugEnabled && { debugInfo })
   };
