@@ -446,12 +446,43 @@ export function checkTemporalConsistency(exifData: any): { consistent: boolean; 
   const originalTime = parseExifDate(dateTimeOriginal, offsetOriginal);
   const modifiedTime = parseExifDate(modifyDate, undefined);
 
+  // Check for modification before capture (pre-dating)
   if (originalTime && modifiedTime && modifiedTime < originalTime) {
     return {
       consistent: false,
       details: `Inconsistência temporal: ModifyDate (${modifyDate}) anterior a DateTimeOriginal (${dateTimeOriginal})`,
       hasData: true
     };
+  }
+
+  // Check for significant post-capture modification (>5 minutes)
+  if (originalTime && modifiedTime && modifiedTime > originalTime) {
+    const diffMs = modifiedTime.getTime() - originalTime.getTime();
+    const diffMinutes = diffMs / (1000 * 60);
+    const TOLERANCE_MINUTES = 5; // Allow up to 5 minutes for normal camera processing
+
+    if (diffMinutes > TOLERANCE_MINUTES) {
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+      let timeDescription = '';
+      if (diffDays > 0) {
+        timeDescription = `${diffDays} dia${diffDays > 1 ? 's' : ''}`;
+        if (diffHours > 0) timeDescription += ` e ${diffHours}h`;
+      } else if (diffHours > 0) {
+        timeDescription = `${diffHours}h`;
+        if (diffMins > 0) timeDescription += ` ${diffMins}min`;
+      } else {
+        timeDescription = `${diffMins} minutos`;
+      }
+
+      return {
+        consistent: false,
+        details: `Edição posterior detectada: modificado ${timeDescription} após captura (${dateTimeOriginal} → ${modifyDate})`,
+        hasData: true
+      };
+    }
   }
   
   if (originalTime || modifiedTime) {
