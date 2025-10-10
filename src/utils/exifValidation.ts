@@ -776,12 +776,13 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
 
   // 3. Only container metadata present (basic file info)
   const hasOnlyContainer = allKeys
-    .filter(k => k !== 'SourceFile')  // Ignore ExifTool-generated field
+    .filter(k => k !== 'SourceFile' && !k.startsWith('System:'))  // Filter out System: and SourceFile
     .every(k => 
-      k.startsWith('System:') || 
       k.startsWith('File:') || 
-      k.startsWith('JFIF:') || 
-      (k.startsWith('IFD0:') && /^IFD0:(Orientation|XResolution|YResolution|ResolutionUnit|YCbCrPositioning)$/.test(k)) ||  // Allow only structural IFD0 fields
+      k.startsWith('JFIF:') ||  // JPEG container
+      /^PNG:(ImageWidth|ImageHeight|BitDepth|ColorType|Compression|Filter|Interlace|SamplesPerPixel|Gamma|Chromaticities|SRGBRendering(?:Intent)?)$/.test(k) ||  // PNG structural only
+      /^PNG-pHYs:(PixelsPerUnitX|PixelsPerUnitY|PixelUnits)$/.test(k) ||  // PNG physical pixel dimensions
+      (k.startsWith('IFD0:') && /^IFD0:(Orientation|XResolution|YResolution|ResolutionUnit|YCbCrPositioning)$/.test(k)) ||  // JPEG IFD0 structural allowlist
       k.startsWith('IFD1:') ||  // thumbnails
       k.startsWith('Composite:') ||
       k.startsWith('ExifTool:')
