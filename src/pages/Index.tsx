@@ -1,17 +1,39 @@
 import { useState } from 'react';
-import { FileSearch } from 'lucide-react';
+import { FileSearch, ChevronLeft, ChevronRight } from 'lucide-react';
 import FileUploadZone from '@/components/FileUploadZone';
 import ExifToolMetadataDisplay from '@/components/ExifToolMetadataDisplay';
+import { Button } from '@/components/ui/button';
+
+interface FileUploadResult {
+  file: File;
+  status: 'pending' | 'uploading' | 'success' | 'error';
+  data?: any;
+  error?: string;
+}
 
 const Index = () => {
-  const [processedData, setProcessedData] = useState<any>(null);
+  const [uploadedFiles, setUploadedFiles] = useState<FileUploadResult[]>([]);
+  const [currentFileIndex, setCurrentFileIndex] = useState(0);
 
-  const handleFileUpload = (data: any) => {
-    setProcessedData(data);
+  const handleFilesUpload = (results: FileUploadResult[]) => {
+    setUploadedFiles(results);
+    setCurrentFileIndex(0);
   };
 
-  const handleRemoveFile = () => {
-    setProcessedData(null);
+  const handleRemoveFiles = () => {
+    setUploadedFiles([]);
+    setCurrentFileIndex(0);
+  };
+
+  const successFiles = uploadedFiles.filter(f => f.status === 'success');
+  const currentFile = successFiles[currentFileIndex];
+
+  const goToPrevious = () => {
+    setCurrentFileIndex(prev => Math.max(0, prev - 1));
+  };
+
+  const goToNext = () => {
+    setCurrentFileIndex(prev => Math.min(successFiles.length - 1, prev + 1));
   };
 
   return (
@@ -28,7 +50,7 @@ const Index = () => {
                 Analisador de Metadados
               </h1>
               <p className="text-muted-foreground text-sm">
-                Extraia e visualize metadados completos de qualquer arquivo
+                Extraia e visualize metadados completos de até 10 arquivos
               </p>
             </div>
           </div>
@@ -42,25 +64,57 @@ const Index = () => {
           {/* Upload Section */}
           <div className="w-full flex justify-center">
             <FileUploadZone
-              onFileUpload={handleFileUpload}
-              uploadedFile={processedData?.metadata?.file_name ? { 
-                name: processedData.metadata.file_name,
-                size: processedData.metadata.size_bytes,
-                type: processedData.metadata.mime_type
-              } as File : null}
-              onRemoveFile={handleRemoveFile}
+              onFilesUpload={handleFilesUpload}
+              uploadedFiles={uploadedFiles.length > 0 ? uploadedFiles : undefined}
+              onRemoveFiles={handleRemoveFiles}
             />
           </div>
 
+          {/* Navigation for multiple files */}
+          {successFiles.length > 1 && (
+            <div className="flex items-center gap-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={goToPrevious}
+                disabled={currentFileIndex === 0}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                Anterior
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                Arquivo {currentFileIndex + 1} de {successFiles.length}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={goToNext}
+                disabled={currentFileIndex === successFiles.length - 1}
+              >
+                Próximo
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          )}
+
+          {/* Current file name indicator */}
+          {currentFile && (
+            <div className="text-center">
+              <p className="text-lg font-medium text-foreground">
+                {currentFile.file.name}
+              </p>
+            </div>
+          )}
+
           {/* Results Section */}
-          {processedData && (
+          {currentFile && (
             <div className="w-full flex justify-center animate-in fade-in duration-500">
-              <ExifToolMetadataDisplay metadata={processedData} />
+              <ExifToolMetadataDisplay metadata={currentFile.data} />
             </div>
           )}
 
           {/* Info Section (when no file is uploaded) */}
-          {!processedData && (
+          {uploadedFiles.length === 0 && (
             <div className="max-w-2xl text-center space-y-6 animate-in fade-in duration-300">
               <div className="space-y-4">
                 <h2 className="text-3xl font-bold text-foreground">
@@ -77,9 +131,9 @@ const Index = () => {
                   <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mx-auto">
                     <FileSearch className="h-6 w-6 text-primary" />
                   </div>
-                  <h3 className="font-semibold text-foreground">Análise Completa</h3>
+                  <h3 className="font-semibold text-foreground">Análise em Lote</h3>
                   <p className="text-sm text-muted-foreground">
-                    Extração de todos os metadados disponíveis
+                    Processe até 10 arquivos simultaneamente
                   </p>
                 </div>
                 
