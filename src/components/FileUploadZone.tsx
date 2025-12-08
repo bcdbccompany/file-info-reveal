@@ -1,18 +1,29 @@
 import { useState, useCallback } from 'react';
-import { Upload, File, X, Loader2 } from 'lucide-react';
+import { Upload, File, X, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { Progress } from '@/components/ui/progress';
 
-interface FileUploadZoneProps {
-  onFileUpload: (metadata: any) => void;
-  uploadedFile?: File | null;
-  onRemoveFile?: () => void;
+interface FileUploadResult {
+  file: File;
+  status: 'pending' | 'uploading' | 'success' | 'error';
+  data?: any;
+  error?: string;
 }
 
-export default function FileUploadZone({ onFileUpload, uploadedFile, onRemoveFile }: FileUploadZoneProps) {
+interface FileUploadZoneProps {
+  onFilesUpload: (results: FileUploadResult[]) => void;
+  uploadedFiles?: FileUploadResult[];
+  onRemoveFiles?: () => void;
+}
+
+const MAX_FILES = 10;
+
+export default function FileUploadZone({ onFilesUpload, uploadedFiles, onRemoveFiles }: FileUploadZoneProps) {
   const [dragActive, setDragActive] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<FileUploadResult[]>([]);
   const { toast } = useToast();
 
   const handleDrag = useCallback((e: React.DragEvent) => {
@@ -25,11 +36,7 @@ export default function FileUploadZone({ onFileUpload, uploadedFile, onRemoveFil
     }
   }, []);
 
-  const processFile = useCallback(async (file: File) => {
-    if (isUploading) return;
-    
-    setIsUploading(true);
-    
+  const processFile = async (file: File): Promise<FileUploadResult> => {
     try {
       // Upload file to Supabase Storage
       const fileExt = file.name.split('.').pop();
@@ -62,41 +69,99 @@ export default function FileUploadZone({ onFileUpload, uploadedFile, onRemoveFil
         throw new Error(data.error || 'Unknown processing error');
       }
 
-      onFileUpload(data);
-      
-      toast({
-        title: "Arquivo processado com sucesso!",
-        description: "Metadados extraídos usando ExifTool API.",
-      });
-
+      return { file, status: 'success', data };
     } catch (error) {
       console.error('Upload/processing error:', error);
+      return { 
+        file, 
+        status: 'error', 
+        error: error instanceof Error ? error.message : 'Falha ao processar o arquivo' 
+      };
+    }
+  };
+
+  const processFiles = useCallback(async (files: File[]) => {
+    if (isUploading) return;
+    
+    const filesToProcess = Array.from(files).slice(0, MAX_FILES);
+    
+    if (files.length > MAX_FILES) {
       toast({
-        title: "Erro no processamento",
-        description: error instanceof Error ? error.message : "Falha ao processar o arquivo",
+        title: "Limite de arquivos",
+        description: `Máximo de ${MAX_FILES} arquivos permitidos. Processando os primeiros ${MAX_FILES}.`,
         variant: "destructive"
       });
-    } finally {
-      setIsUploading(false);
     }
-  }, [onFileUpload, isUploading, toast]);
+
+    setIsUploading(true);
+    
+    // Initialize progress tracking
+    const initialProgress: FileUploadResult[] = filesToProcess.map(file => ({
+      file,
+      status: 'pending'
+    }));
+    setUploadProgress(initialProgress);
+
+    // Process files in parallel with status updates
+    const results: FileUploadResult[] = await Promise.all(
+      filesToProcess.map(async (file, index) => {
+        // Update status to uploading
+        setUploadProgress(prev => {
+          const updated = [...prev];
+          updated[index] = { ...updated[index], status: 'uploading' };
+          return updated;
+        });
+
+        const result = await processFile(file);
+
+        // Update status with result
+        setUploadProgress(prev => {
+          const updated = [...prev];
+          updated[index] = result;
+          return updated;
+        });
+
+        return result;
+      })
+    );
+
+    const successCount = results.filter(r => r.status === 'success').length;
+    const errorCount = results.filter(r => r.status === 'error').length;
+
+    if (successCount > 0) {
+      toast({
+        title: "Processamento concluído!",
+        description: `${successCount} arquivo(s) processado(s) com sucesso${errorCount > 0 ? `, ${errorCount} com erro` : ''}.`,
+      });
+    } else {
+      toast({
+        title: "Erro no processamento",
+        description: "Nenhum arquivo foi processado com sucesso.",
+        variant: "destructive"
+      });
+    }
+
+    onFilesUpload(results);
+    setIsUploading(false);
+    setUploadProgress([]);
+  }, [onFilesUpload, isUploading, toast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
     
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      processFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFiles(Array.from(e.dataTransfer.files));
     }
-  }, [processFile]);
+  }, [processFiles]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     e.preventDefault();
-    if (e.target.files && e.target.files[0]) {
-      processFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      processFiles(Array.from(e.target.files));
     }
-  }, [processFile]);
+  }, [processFiles]);
 
   const formatBytes = (b?: number): string => {
     if (!Number.isFinite(b)) return '—';
@@ -123,30 +188,94 @@ export default function FileUploadZone({ onFileUpload, uploadedFile, onRemoveFil
     return mimeMap[ext];
   };
 
-  if (uploadedFile) {
+  // Show upload progress
+  if (isUploading && uploadProgress.length > 0) {
+    const completedCount = uploadProgress.filter(p => p.status === 'success' || p.status === 'error').length;
+    const progressPercent = (completedCount / uploadProgress.length) * 100;
+
     return (
       <div className="w-full max-w-2xl bg-gradient-card border border-border rounded-lg p-6 shadow-card">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div className="p-3 bg-primary/10 rounded-lg">
-              <File className="h-6 w-6 text-primary" />
-            </div>
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Loader2 className="h-6 w-6 text-primary animate-spin" />
             <div>
-              <p className="font-semibold text-foreground">{uploadedFile.name}</p>
+              <p className="font-semibold text-foreground">Processando arquivos...</p>
               <p className="text-sm text-muted-foreground">
-                {formatBytes(uploadedFile.size)} • {uploadedFile.type || guessFromExt(uploadedFile.name) || 'Tipo desconhecido'}
+                {completedCount} de {uploadProgress.length} arquivos
               </p>
             </div>
           </div>
-          {onRemoveFile && (
+          <Progress value={progressPercent} className="h-2" />
+          <div className="space-y-2 max-h-48 overflow-y-auto">
+            {uploadProgress.map((item, index) => (
+              <div key={index} className="flex items-center gap-3 p-2 bg-muted/50 rounded-lg">
+                {item.status === 'pending' && (
+                  <div className="h-4 w-4 rounded-full border-2 border-muted-foreground" />
+                )}
+                {item.status === 'uploading' && (
+                  <Loader2 className="h-4 w-4 text-primary animate-spin" />
+                )}
+                {item.status === 'success' && (
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                )}
+                {item.status === 'error' && (
+                  <AlertCircle className="h-4 w-4 text-destructive" />
+                )}
+                <span className="text-sm truncate flex-1">{item.file.name}</span>
+                <span className="text-xs text-muted-foreground">{formatBytes(item.file.size)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show uploaded files list
+  if (uploadedFiles && uploadedFiles.length > 0) {
+    const successFiles = uploadedFiles.filter(f => f.status === 'success');
+    const errorFiles = uploadedFiles.filter(f => f.status === 'error');
+
+    return (
+      <div className="w-full max-w-2xl bg-gradient-card border border-border rounded-lg p-6 shadow-card">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <File className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">
+                {successFiles.length} arquivo(s) processado(s)
+              </p>
+              {errorFiles.length > 0 && (
+                <p className="text-sm text-destructive">
+                  {errorFiles.length} arquivo(s) com erro
+                </p>
+              )}
+            </div>
+          </div>
+          {onRemoveFiles && (
             <button
-              onClick={onRemoveFile}
+              onClick={onRemoveFiles}
               className="p-2 hover:bg-muted rounded-lg transition-colors"
-              aria-label="Remover arquivo"
+              aria-label="Remover arquivos"
             >
               <X className="h-5 w-5 text-muted-foreground" />
             </button>
           )}
+        </div>
+        <div className="space-y-2 max-h-48 overflow-y-auto">
+          {uploadedFiles.map((item, index) => (
+            <div key={index} className="flex items-center gap-3 p-2 bg-muted/30 rounded-lg">
+              {item.status === 'success' ? (
+                <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-destructive flex-shrink-0" />
+              )}
+              <span className="text-sm truncate flex-1">{item.file.name}</span>
+              <span className="text-xs text-muted-foreground">{formatBytes(item.file.size)}</span>
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -168,31 +297,25 @@ export default function FileUploadZone({ onFileUpload, uploadedFile, onRemoveFil
       >
         <input
           type="file"
+          multiple
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
           onChange={handleChange}
           disabled={isUploading}
-          aria-label="Upload de arquivo"
+          aria-label="Upload de arquivos"
         />
         <div className="space-y-4">
           <div className="mx-auto w-16 h-16 bg-gradient-primary rounded-full flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
-            {isUploading ? (
-              <Loader2 className="h-8 w-8 text-white animate-spin" />
-            ) : (
-              <Upload className="h-8 w-8 text-white" />
-            )}
+            <Upload className="h-8 w-8 text-white" />
           </div>
           <div>
             <h3 className="text-xl font-semibold text-foreground mb-2">
-              {isUploading ? "Processando arquivo..." : "Arraste um arquivo aqui"}
+              Arraste arquivos aqui
             </h3>
             <p className="text-muted-foreground mb-4">
-              {isUploading 
-                ? "Extraindo metadados com ExifTool API..." 
-                : "ou clique para selecionar um arquivo do seu dispositivo"
-              }
+              ou clique para selecionar arquivos do seu dispositivo
             </p>
             <p className="text-sm text-muted-foreground">
-              Suporte para qualquer tipo de arquivo
+              Máximo de {MAX_FILES} arquivos por vez
             </p>
           </div>
         </div>
