@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { FileSearch, ChevronLeft, ChevronRight } from 'lucide-react';
 import FileUploadZone from '@/components/FileUploadZone';
 import ExifToolMetadataDisplay from '@/components/ExifToolMetadataDisplay';
+import { DailyReportDownload } from '@/components/DailyReportDownload';
 import { Button } from '@/components/ui/button';
 
 interface FileUploadResult {
@@ -41,18 +42,21 @@ const Index = () => {
       {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-primary rounded-lg">
-              <FileSearch className="h-6 w-6 text-white" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-gradient-primary rounded-lg">
+                <FileSearch className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-foreground">
+                  Analisador de Metadados
+                </h1>
+                <p className="text-muted-foreground text-sm">
+                  Extraia e visualize metadados completos de até 10 arquivos
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold text-foreground">
-                Analisador de Metadados
-              </h1>
-              <p className="text-muted-foreground text-sm">
-                Extraia e visualize metadados completos de até 10 arquivos
-              </p>
-            </div>
+            <DailyReportDownload />
           </div>
         </div>
       </header>
