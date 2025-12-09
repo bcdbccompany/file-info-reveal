@@ -69,6 +69,14 @@ export const DEFAULT_CONFIG: ValidationConfig = {
   c2paStrongBump: 0,              // Disabled by default (can be set to 2)
 };
 
+// Windows reprocessors (Photo Viewer, Photos app)
+const WINDOWS_REPROCESSORS = [
+  /microsoft windows photo viewer/i,
+  /windows photo viewer/i,
+  /microsoft photos/i,
+  /windows photo gallery/i,
+];
+
 // Known editor software patterns (excluding firmware)
 const KNOWN_EDITORS = [
   /adobe photoshop/i,
@@ -155,15 +163,16 @@ export function getCanonicalCaptureDate(exifData: any): string | null {
 }
 
 /**
- * Enhanced date detection covering all namespaces
+ * Check for EXIF capture dates only (not ModifyDate, not XMP)
+ * Used to determine if dateTimeAbsent penalty should apply
  */
 export function hasAnyCreateDate(exifData: any): boolean {
   const dateFields = [
-    'EXIF:DateTime', 'EXIF:DateTimeOriginal', 'EXIF:CreateDate',
-    'ExifIFD:DateTime', 'ExifIFD:DateTimeOriginal', 'ExifIFD:CreateDate',
-    'IFD0:DateTime', 'IFD0:ModifyDate',
-    'XMP:CreateDate', 'XMP:ModifyDate', 'XMP-exif:DateTimeOriginal', 'XMP-photoshop:DateCreated',
-    'Composite:SubSecDateTimeOriginal'
+    'EXIF:DateTimeOriginal',
+    'EXIF:CreateDate',
+    'ExifIFD:DateTimeOriginal',
+    'ExifIFD:CreateDate',
+    'Composite:SubSecDateTimeOriginal',
   ];
 
   return dateFields.some(field => exifData[field]);
@@ -188,6 +197,10 @@ export function detectRealEditor(exifData: any): {
   for (const field of softwareFields) {
     const software = exifData[field];
     if (software && !looksLikeFirmware(software)) {
+      // Check Windows reprocessors first (high priority)
+      if (WINDOWS_REPROCESSORS.some(p => p.test(software))) {
+        return { isEditor: true, software, confidence: 'high', source: 'windows-viewer' };
+      }
       for (const editorPattern of KNOWN_EDITORS) {
         if (editorPattern.test(software)) {
           return { isEditor: true, software, confidence: 'high', source: 'canonical' };
@@ -485,8 +498,24 @@ export function checkTemporalConsistency(exifData: any): { consistent: boolean; 
     }
   }
   
-  if (originalTime || modifiedTime) {
+  // Only give positive "temporal consistency verified" when we have DateTimeOriginal
+  if (originalTime && modifiedTime) {
+    // Both dates present and no inconsistency found above
     return { consistent: true, details: 'Consistência temporal verificada', hasData: true };
+  }
+
+  if (originalTime && !modifiedTime) {
+    // Only DateTimeOriginal present - photo not edited, ok
+    return { consistent: true, details: 'Consistência temporal verificada', hasData: true };
+  }
+
+  if (!originalTime && modifiedTime) {
+    // Only ModifyDate present - insufficient data, no positive signal
+    return { 
+      consistent: true, 
+      details: 'Dados temporais insuficientes para verificar edição', 
+      hasData: false 
+    };
   }
 
   return { consistent: true, details: 'Dados temporais não disponíveis', hasData: false };
