@@ -102,28 +102,30 @@ export default function FileUploadZone({ onFilesUpload, uploadedFiles, onRemoveF
     }));
     setUploadProgress(initialProgress);
 
-    // Process files in parallel with status updates
-    const results: FileUploadResult[] = await Promise.all(
-      filesToProcess.map(async (file, index) => {
-        // Update status to uploading
-        setUploadProgress(prev => {
-          const updated = [...prev];
-          updated[index] = { ...updated[index], status: 'uploading' };
-          return updated;
-        });
+    // Process files sequentially to avoid overwhelming the edge function
+    const results: FileUploadResult[] = [];
+    
+    for (let index = 0; index < filesToProcess.length; index++) {
+      const file = filesToProcess[index];
+      
+      // Update status to uploading
+      setUploadProgress(prev => {
+        const updated = [...prev];
+        updated[index] = { ...updated[index], status: 'uploading' };
+        return updated;
+      });
 
-        const result = await processFile(file);
+      const result = await processFile(file);
 
-        // Update status with result
-        setUploadProgress(prev => {
-          const updated = [...prev];
-          updated[index] = result;
-          return updated;
-        });
+      // Update status with result
+      setUploadProgress(prev => {
+        const updated = [...prev];
+        updated[index] = result;
+        return updated;
+      });
 
-        return result;
-      })
-    );
+      results.push(result);
+    }
 
     const successCount = results.filter(r => r.status === 'success').length;
     const errorCount = results.filter(r => r.status === 'error').length;
