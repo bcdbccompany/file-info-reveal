@@ -52,7 +52,7 @@ const Index = () => {
                   Analisador de Metadados
                 </h1>
                 <p className="text-muted-foreground text-sm">
-                  Extraia e visualize metadados completos de até 10 arquivos
+                  Extraia e visualize metadados completos de até 50 arquivos
                 </p>
               </div>
             </div>
@@ -137,7 +137,7 @@ const Index = () => {
                   </div>
                   <h3 className="font-semibold text-foreground">Análise em Lote</h3>
                   <p className="text-sm text-muted-foreground">
-                    Processe até 10 arquivos simultaneamente
+                    Processe até 50 arquivos simultaneamente
                   </p>
                 </div>
                 
