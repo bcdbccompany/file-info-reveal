@@ -18,7 +18,7 @@ interface FileUploadZoneProps {
   onRemoveFiles?: () => void;
 }
 
-const MAX_FILES = 10;
+const MAX_FILES = 50;
 
 export default function FileUploadZone({ onFilesUpload, uploadedFiles, onRemoveFiles }: FileUploadZoneProps) {
   const [dragActive, setDragActive] = useState(false);
