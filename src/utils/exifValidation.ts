@@ -619,12 +619,80 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
   const isSubsampling444 = /4:4:4/.test(String(exifData['File:YCbCrSubSampling'] || ''));
 
   const cameraExifMissing = !hasMake && !hasModel && !hasCreateDate;
+  
+  // Hard signals = real indicators of manipulation (NOT progressive JPEG)
   const hasHardSignals = 
     editorResult.isEditor ||
     aiResult.hasAI ||
     photoshopGroupDetected ||
-    isProgressiveJPEG ||
     isSubsampling444;
+
+  // === Insufficient Metadata Detection (EARLY) ===
+  // Detect images with completely stripped metadata (deliberate removal or basic export)
+  // This is checked early to allow early exit and avoid false positives
+
+  // 1. No camera EXIF (Make, Model, DateTime)
+  const noCameraExif = 
+    !exifData['IFD0:Make'] && 
+    !exifData['IFD0:Model'] && 
+    !exifData['EXIF:DateTimeOriginal'] && 
+    !exifData['IFD0:DateTime'] && 
+    !exifData['EXIF:DateTime'] && 
+    !exifData['ExifIFD:DateTimeOriginal'] && 
+    !exifData['EXIF:CreateDate'] && 
+    !exifData['IFD0:CreateDate'] && 
+    !exifData['ExifIFD:CreateDate'];
+
+  // 2. No software signatures (editing/processing indicators)
+  const allKeys = Object.keys(exifData);
+  const noSoftwareSignature = !allKeys.some(k => 
+    k.startsWith('XMP:') || 
+    k.startsWith('Photoshop:') || 
+    k.startsWith('APP14:') || 
+    k.includes('Adobe') ||
+    k.startsWith('ICC_Profile:') || 
+    k.startsWith('ICC-header:') ||
+    k === 'EXIF:Software' ||
+    k === 'IFD0:Software' ||
+    k === 'EXIF:ProcessingSoftware'
+  );
+
+  // 3. Only container metadata present (basic file info)
+  const hasOnlyContainer = allKeys
+    .filter(k => k !== 'SourceFile' && !k.startsWith('System:'))
+    .every(k => 
+      k.startsWith('File:') || 
+      k.startsWith('JFIF:') ||
+      /^PNG:(ImageWidth|ImageHeight|BitDepth|ColorType|Compression|Filter|Interlace|SamplesPerPixel|Gamma|Chromaticities|SRGBRendering(?:Intent)?)$/.test(k) ||
+      /^PNG-pHYs:(PixelsPerUnitX|PixelsPerUnitY|PixelUnits)$/.test(k) ||
+      (k.startsWith('IFD0:') && /^IFD0:(Orientation|XResolution|YResolution|ResolutionUnit|YCbCrPositioning)$/.test(k)) ||
+      k.startsWith('IFD1:') ||
+      k.startsWith('Composite:') ||
+      k.startsWith('ExifTool:')
+    );
+
+  const insufficientMetadata = noCameraExif && noSoftwareSignature && hasOnlyContainer;
+
+  // === EARLY EXIT for Insufficient Metadata ===
+  // When metadata is insufficient AND no hard manipulation signals detected,
+  // return "Inconclusivo" instead of applying individual penalties (avoids false positives)
+  if (insufficientMetadata && !hasHardSignals && !isDigitalTransport) {
+    return {
+      level: 0,
+      label: 'Inconclusivo',
+      score: 0,
+      canonicalCaptureDate: null,
+      make: null,
+      model: null,
+      positiveSignals: ['Nenhum software de edição declarado'],
+      riskSignals: ['Metadados insuficientes para validação'],
+      recommendation: 'Metadados insuficientes para validação — possível imagem da web, screenshot ou exportação sem EXIF. Solicite o arquivo original do dispositivo.',
+      isDigitalTransport: false,
+      insufficientMetadata: true,
+      hasStrongC2PA: false,
+      ...(debugEnabled && { debugInfo: { earlyExit: 'insufficientMetadata', basicInfo: { make, model, canonicalCaptureDate } } })
+    };
+  }
 
   // Block missing EXIF penalties when digital transport detected
   if (!isDigitalTransport) {
@@ -773,51 +841,6 @@ export function validateImageMetadata(exifData: any, config: ValidationConfig = 
     debugInfo.scoring = { score, positiveSignals, riskSignals };
   }
 
-  // === Insufficient Metadata Detection ===
-  // Detect images with completely stripped metadata (deliberate removal or basic export)
-  // Only triggers when ALL three conditions are met:
-
-  // 1. No camera EXIF (Make, Model, DateTime)
-  const noCameraExif = 
-    !exifData['IFD0:Make'] && 
-    !exifData['IFD0:Model'] && 
-    !exifData['EXIF:DateTimeOriginal'] && 
-    !exifData['IFD0:DateTime'] && 
-    !exifData['EXIF:DateTime'] && 
-    !exifData['ExifIFD:DateTimeOriginal'] && 
-    !exifData['EXIF:CreateDate'] && 
-    !exifData['IFD0:CreateDate'] && 
-    !exifData['ExifIFD:CreateDate'];
-
-  // 2. No software signatures (editing/processing indicators)
-  const allKeys = Object.keys(exifData);
-  const noSoftwareSignature = !allKeys.some(k => 
-    k.startsWith('XMP:') || 
-    k.startsWith('Photoshop:') || 
-    k.startsWith('APP14:') || 
-    k.includes('Adobe') ||
-    k.startsWith('ICC_Profile:') || 
-    k.startsWith('ICC-header:') ||
-    k === 'EXIF:Software' ||
-    k === 'IFD0:Software' ||
-    k === 'EXIF:ProcessingSoftware'
-  );
-
-  // 3. Only container metadata present (basic file info)
-  const hasOnlyContainer = allKeys
-    .filter(k => k !== 'SourceFile' && !k.startsWith('System:'))  // Filter out System: and SourceFile
-    .every(k => 
-      k.startsWith('File:') || 
-      k.startsWith('JFIF:') ||  // JPEG container
-      /^PNG:(ImageWidth|ImageHeight|BitDepth|ColorType|Compression|Filter|Interlace|SamplesPerPixel|Gamma|Chromaticities|SRGBRendering(?:Intent)?)$/.test(k) ||  // PNG structural only
-      /^PNG-pHYs:(PixelsPerUnitX|PixelsPerUnitY|PixelUnits)$/.test(k) ||  // PNG physical pixel dimensions
-      (k.startsWith('IFD0:') && /^IFD0:(Orientation|XResolution|YResolution|ResolutionUnit|YCbCrPositioning)$/.test(k)) ||  // JPEG IFD0 structural allowlist
-      k.startsWith('IFD1:') ||  // thumbnails
-      k.startsWith('Composite:') ||
-      k.startsWith('ExifTool:')
-    );
-
-  const insufficientMetadata = noCameraExif && noSoftwareSignature && hasOnlyContainer;
 
   // Determine classification level
   let level: number;
