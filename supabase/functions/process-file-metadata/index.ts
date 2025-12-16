@@ -77,7 +77,7 @@ serve(async (req) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          signedUrl: signedUrlData.signedUrl
+          SigneUrl: signedUrlData.signedUrl
         })
       })
     } catch (retryError) {
