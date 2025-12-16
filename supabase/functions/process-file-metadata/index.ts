@@ -65,8 +65,11 @@ serve(async (req) => {
       })
     }
 
-    // Call the ExifTool API with retry logic
-    let apiResponse: Response
+    // Call the Analyzer/ExifTool API (graceful degradation if unavailable)
+    let exifData: Record<string, unknown> = {}
+    let analyzerWarning: string | null = null
+
+    let apiResponse: Response | null = null
     try {
       apiResponse = await fetchWithRetry(`${analyzerApiUrl}/api/Analyze/url`, {
         method: 'POST',
@@ -74,37 +77,38 @@ serve(async (req) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          signeUrl: signedUrlData.signedUrl
+          signedUrl: signedUrlData.signedUrl
         })
       })
     } catch (retryError) {
-      console.error('ExifTool API failed after retries:', retryError.message)
-      return new Response(JSON.stringify({ error: 'Analyzer API temporarily unavailable, please try again' }), {
-        status: 503,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      const message = retryError instanceof Error ? retryError.message : String(retryError)
+      console.error('Analyzer API failed after retries:', message)
+      analyzerWarning = `Analyzer API temporariamente indisponível (${message}). Metadados completos não puderam ser extraídos.`
     }
 
-    if (!apiResponse.ok) {
-      console.error('ExifTool API error:', apiResponse.status, await apiResponse.text())
-      return new Response(JSON.stringify({ error: 'Failed to analyze file metadata' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+    if (apiResponse) {
+      if (apiResponse.ok) {
+        try {
+          const exifToolResponse = await apiResponse.json()
+
+          if (exifToolResponse?.ok && Array.isArray(exifToolResponse?.exif) && exifToolResponse.exif[0]) {
+            // Extract the first exif object (should be the main file data)
+            exifData = exifToolResponse.exif[0]
+          } else {
+            console.error('Invalid Analyzer API response:', exifToolResponse)
+            analyzerWarning = 'Resposta inválida do analisador de metadados. Metadados completos não puderam ser extraídos.'
+          }
+        } catch (parseError) {
+          const message = parseError instanceof Error ? parseError.message : String(parseError)
+          console.error('Failed to parse Analyzer API response:', message)
+          analyzerWarning = 'Falha ao interpretar resposta do analisador. Metadados completos não puderam ser extraídos.'
+        }
+      } else {
+        const errText = await apiResponse.text().catch(() => '')
+        console.error('Analyzer API error:', apiResponse.status, errText)
+        analyzerWarning = `Analyzer API retornou HTTP ${apiResponse.status}. Metadados completos não puderam ser extraídos.`
+      }
     }
-
-    const exifToolResponse = await apiResponse.json()
-
-    if (!exifToolResponse.ok || !exifToolResponse.exif) {
-      console.error('Invalid ExifTool response:', exifToolResponse)
-      return new Response(JSON.stringify({ error: 'Invalid response from metadata analyzer' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
-    }
-
-    // Extract the first exif object (should be the main file data)
-    const exifData = exifToolResponse.exif[0]
 
     // Save to database
     const { data: metadata, error: insertError } = await supabase
@@ -117,6 +121,13 @@ serve(async (req) => {
         size_bytes: sizeBytes,
         exif_raw: exifData,
         exif_data: exifData, // Keep backward compatibility
+        analysis_results: analyzerWarning
+          ? {
+              status: 'degraded',
+              warning: analyzerWarning,
+              at: new Date().toISOString(),
+            }
+          : null,
         file_info: {
           name: fileName,
           size: sizeBytes,
@@ -135,10 +146,11 @@ serve(async (req) => {
       })
     }
 
-    return new Response(JSON.stringify({ 
-      success: true, 
+    return new Response(JSON.stringify({
+      success: true,
       metadata,
-      rawExifData: exifData
+      rawExifData: exifData,
+      warning: analyzerWarning
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
